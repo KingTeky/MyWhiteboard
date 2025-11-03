@@ -91,13 +91,8 @@ function joinSession() {
         return;
     }
     
-    // Check if session exists (in a real app, this would be a server call)
+    // Load any locally cached session data (server lookup will be attempted below)
     const sessionData = localStorage.getItem(`session_${code}`);
-    
-    if (!sessionData && code !== AppState.sessionCode) {
-        alert('Session not found. Please check the code and try again.');
-        return;
-    }
     
     AppState.sessionCode = code;
     // If this client has the saved director token for this session, treat as director locally
