@@ -6,6 +6,13 @@ const ANNOTATION_CONFIG = {
     lineJoin: 'round'
 };
 
+// Utility function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Application State
 const AppState = {
     currentPage: 'landing',
@@ -168,7 +175,7 @@ function displayUploadedFile(chart) {
                 </svg>
             </div>
             <div class="file-details">
-                <h3>${chart.name}</h3>
+                <h3>${escapeHtml(chart.name)}</h3>
                 <p>${chart.pages} page${chart.pages !== 1 ? 's' : ''}</p>
             </div>
         </div>
@@ -252,7 +259,7 @@ function renderOrganizeMode() {
                 </svg>
             </div>
             <div class="chart-info">
-                <h3>${chart.name}</h3>
+                <h3>${escapeHtml(chart.name)}</h3>
                 <p>PDF Chart</p>
             </div>
         `;
