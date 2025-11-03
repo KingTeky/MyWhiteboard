@@ -289,6 +289,32 @@ function initSortable() {
     }
 }
 
+// Date/time ticker for organize mode header
+let _organizeTicker = null;
+function formatDateTime(d) {
+    // e.g. "Mon Nov 3, 2025 14:23:05"
+    return d.toLocaleString(undefined, {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+}
+
+function startOrganizeTicker() {
+    stopOrganizeTicker();
+    const el = document.getElementById('current-chart-name');
+    if (!el) return;
+    const tick = () => { el.textContent = formatDateTime(new Date()); };
+    tick();
+    _organizeTicker = setInterval(tick, 1000);
+}
+
+function stopOrganizeTicker() {
+    if (_organizeTicker) {
+        clearInterval(_organizeTicker);
+        _organizeTicker = null;
+    }
+}
+
 function renderOrganizeMode() {
     const grid = document.getElementById('charts-grid');
     grid.innerHTML = '';
@@ -443,12 +469,16 @@ function switchToMode(mode) {
         organizeView.classList.remove('active');
         concertBtn.classList.add('active');
         organizeBtn.classList.remove('active');
+        // Stop the organize mode ticker and restore the current chart title
+        stopOrganizeTicker();
         renderCurrentChart();
     } else {
         concertView.classList.remove('active');
         organizeView.classList.add('active');
         concertBtn.classList.remove('active');
         organizeBtn.classList.add('active');
+        // Start date/time ticker in the header and render organize grid
+        startOrganizeTicker();
         renderOrganizeMode();
     }
 }
