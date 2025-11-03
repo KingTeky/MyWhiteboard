@@ -568,6 +568,7 @@ function stopDrawing() {
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
+    try {
     // Apply theme preference for this client (independent per device/user)
     function applyTheme(theme) {
         if (theme === 'dark') {
@@ -624,94 +625,128 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     // Landing page
-    document.getElementById('create-session-btn').addEventListener('click', createSession);
-    document.getElementById('join-session-btn').addEventListener('click', joinSession);
-    document.getElementById('session-code-input').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') joinSession();
-    });
+    const createBtn = document.getElementById('create-session-btn');
+    if (createBtn) createBtn.addEventListener('click', createSession);
+
+    const joinBtn = document.getElementById('join-session-btn');
+    if (joinBtn) joinBtn.addEventListener('click', joinSession);
+
+    const sessionInput = document.getElementById('session-code-input');
+    if (sessionInput) {
+        sessionInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') joinSession();
+        });
+    }
     
     // Upload page
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('pdf-upload');
-    
-    document.getElementById('browse-files-btn').addEventListener('click', () => {
-        fileInput.click();
-    });
-    
-    fileInput.addEventListener('change', function(e) {
-        handleFileSelect(e.target.files);
-    });
+
+    const browseBtn = document.getElementById('browse-files-btn');
+    if (browseBtn && fileInput) {
+        browseBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+    }
+
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            handleFileSelect(e.target.files);
+        });
+    }
 
     // Organize view: allow adding charts from here as well
     const addChartsBtn = document.getElementById('add-charts-btn');
-    if (addChartsBtn) {
+    if (addChartsBtn && fileInput) {
         addChartsBtn.addEventListener('click', () => {
             // reuse the hidden file input to add charts
             fileInput.click();
         });
     }
-    
-    dropZone.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        dropZone.classList.add('drag-over');
-    });
-    
-    dropZone.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        dropZone.classList.remove('drag-over');
-    });
-    
-    dropZone.addEventListener('drop', function(e) {
-        e.preventDefault();
-        dropZone.classList.remove('drag-over');
-        handleFileSelect(e.dataTransfer.files);
-    });
-    
-    document.getElementById('start-session-btn').addEventListener('click', startSession);
+
+    if (dropZone) {
+        dropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+        
+        dropZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+        });
+        
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            handleFileSelect(e.dataTransfer.files);
+        });
+    }
+
+    const startBtn = document.getElementById('start-session-btn');
+    if (startBtn) startBtn.addEventListener('click', startSession);
     
     // Viewer page
-    document.getElementById('leave-session-btn').addEventListener('click', leaveSession);
-    document.getElementById('prev-page-btn').addEventListener('click', prevPage);
-    document.getElementById('next-page-btn').addEventListener('click', nextPage);
-    document.getElementById('prev-chart-btn').addEventListener('click', prevChart);
-    document.getElementById('next-chart-btn').addEventListener('click', nextChart);
-    document.getElementById('concert-mode-btn').addEventListener('click', () => switchToMode('concert'));
-    document.getElementById('organize-mode-btn').addEventListener('click', () => switchToMode('organize'));
-    document.getElementById('annotation-btn').addEventListener('click', toggleAnnotationMode);
+    const leaveBtn = document.getElementById('leave-session-btn');
+    if (leaveBtn) leaveBtn.addEventListener('click', leaveSession);
+
+    const prevPageBtn = document.getElementById('prev-page-btn');
+    if (prevPageBtn) prevPageBtn.addEventListener('click', prevPage);
+
+    const nextPageBtn = document.getElementById('next-page-btn');
+    if (nextPageBtn) nextPageBtn.addEventListener('click', nextPage);
+
+    const prevChartBtn = document.getElementById('prev-chart-btn');
+    if (prevChartBtn) prevChartBtn.addEventListener('click', prevChart);
+
+    const nextChartBtn = document.getElementById('next-chart-btn');
+    if (nextChartBtn) nextChartBtn.addEventListener('click', nextChart);
+
+    const concertBtn = document.getElementById('concert-mode-btn');
+    if (concertBtn) concertBtn.addEventListener('click', () => switchToMode('concert'));
+
+    const organizeBtn = document.getElementById('organize-mode-btn');
+    if (organizeBtn) organizeBtn.addEventListener('click', () => switchToMode('organize'));
+
+    const annotationBtn = document.getElementById('annotation-btn');
+    if (annotationBtn) annotationBtn.addEventListener('click', toggleAnnotationMode);
     
     // Annotation drawing
     const annotationCanvas = document.getElementById('annotation-canvas');
-    annotationCanvas.addEventListener('mousedown', startDrawing);
-    annotationCanvas.addEventListener('mousemove', draw);
-    annotationCanvas.addEventListener('mouseup', stopDrawing);
-    annotationCanvas.addEventListener('mouseout', stopDrawing);
+    if (annotationCanvas) {
+        annotationCanvas.addEventListener('mousedown', startDrawing);
+        annotationCanvas.addEventListener('mousemove', draw);
+        annotationCanvas.addEventListener('mouseup', stopDrawing);
+        annotationCanvas.addEventListener('mouseout', stopDrawing);
+    }
     
     // Touch support for annotations
-    annotationCanvas.addEventListener('touchstart', function(e) {
-        e.preventDefault();
-        const touch = e.touches[0];
-        const mouseEvent = new MouseEvent('mousedown', {
-            clientX: touch.clientX,
-            clientY: touch.clientY
+    if (annotationCanvas) {
+        annotationCanvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            annotationCanvas.dispatchEvent(mouseEvent);
         });
-        annotationCanvas.dispatchEvent(mouseEvent);
-    });
-    
-    annotationCanvas.addEventListener('touchmove', function(e) {
-        e.preventDefault();
-        const touch = e.touches[0];
-        const mouseEvent = new MouseEvent('mousemove', {
-            clientX: touch.clientX,
-            clientY: touch.clientY
+        
+        annotationCanvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            annotationCanvas.dispatchEvent(mouseEvent);
         });
-        annotationCanvas.dispatchEvent(mouseEvent);
-    });
-    
-    annotationCanvas.addEventListener('touchend', function(e) {
-        e.preventDefault();
-        const mouseEvent = new MouseEvent('mouseup', {});
-        annotationCanvas.dispatchEvent(mouseEvent);
-    });
+        
+        annotationCanvas.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            annotationCanvas.dispatchEvent(mouseEvent);
+        });
+    }
     
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
@@ -732,4 +767,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 break;
         }
     });
+    } catch (err) {
+        // Log initialization errors without preventing UI interactions
+        console.error('Initialization error in app.js DOMContentLoaded:', err);
+    }
 });
