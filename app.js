@@ -51,8 +51,8 @@ function createSession() {
     showPage('upload');
     const uploadCodeEl = document.getElementById('session-code-display');
     if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
-    const viewerCodeEl = document.getElementById('viewer-session-code');
-    if (viewerCodeEl) viewerCodeEl.textContent = `Session: ${AppState.sessionCode}`;
+    const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
+    if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
     
     // Store session in localStorage for demo purposes
     localStorage.setItem('currentSession', JSON.stringify({
@@ -82,8 +82,8 @@ function joinSession() {
     AppState.sessionCode = code;
     AppState.isDirector = false;
 
-    const viewerCodeEl = document.getElementById('viewer-session-code');
-    if (viewerCodeEl) viewerCodeEl.textContent = `Session: ${AppState.sessionCode}`;
+    const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
+    if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
     
     // Load session data
     if (sessionData) {
@@ -113,8 +113,8 @@ function startSession() {
         AppState.isDirector = true;
         const codeEl = document.getElementById('session-code-display');
         if (codeEl) codeEl.textContent = AppState.sessionCode;
-        const viewerCodeEl = document.getElementById('viewer-session-code');
-        if (viewerCodeEl) viewerCodeEl.textContent = `Session: ${AppState.sessionCode}`;
+    const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
+    if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
         console.info('Generated session code for startSession:', AppState.sessionCode);
     }
 
@@ -150,8 +150,8 @@ function leaveSession() {
         AppState.currentPageNumber = 1;
         AppState.sessionCode = null;
         AppState.isDirector = false;
-        const viewerCodeEl = document.getElementById('viewer-session-code');
-        if (viewerCodeEl) viewerCodeEl.textContent = '';
+    const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
+    if (viewerCodeTextEl) viewerCodeTextEl.textContent = '';
         const uploadCodeEl = document.getElementById('session-code-display');
         if (uploadCodeEl) uploadCodeEl.textContent = '';
         showPage('landing');
@@ -833,6 +833,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 break;
         }
     });
+
+    // Copy session code button
+    const copyBtn = document.getElementById('copy-session-code-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async function() {
+            const codeEl = document.getElementById('viewer-session-code-text');
+            const raw = codeEl ? codeEl.textContent : '';
+            const code = raw ? raw.replace(/^Session:\s*/i, '').trim() : (AppState.sessionCode || '').toString();
+            if (!code) return;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(code);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = code;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+                const orig = copyBtn.innerHTML;
+                copyBtn.textContent = '✓';
+                setTimeout(() => { copyBtn.innerHTML = orig; }, 1200);
+            } catch (err) {
+                console.error('Failed to copy session code:', err);
+                alert('Could not copy session code. Please select and copy it manually.');
+            }
+        });
+    }
     } catch (err) {
         // Log initialization errors without preventing UI interactions
         console.error('Initialization error in app.js DOMContentLoaded:', err);

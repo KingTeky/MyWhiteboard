@@ -397,6 +397,20 @@ input[type="text"]::placeholder {
     font-size: 0.85rem;
     margin-top: 6px;
     margin-right: 0.5rem; /* align with control group */
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.viewer-session-code .code-text {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+#copy-session-code-btn {
+    padding: 0.25rem;
+    width: 30px;
+    height: 26px;
 }
 
 /* Views */
