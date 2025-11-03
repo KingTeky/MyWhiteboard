@@ -308,6 +308,14 @@ function startOrganizeTicker() {
     _organizeTicker = setInterval(tick, 1000);
 }
 
+// When showing organize mode, also display the organize help under the clock
+function showOrganizeHeaderHelp() {
+    const pageIndicator = document.getElementById('page-indicator');
+    if (pageIndicator) {
+        pageIndicator.textContent = 'Drag and drop items to reorder. Click to select; double-click to open.';
+    }
+}
+
 function stopOrganizeTicker() {
     if (_organizeTicker) {
         clearInterval(_organizeTicker);
@@ -369,10 +377,9 @@ function renderOrganizeMode() {
             </div>
             <div class="chart-order-badge" aria-hidden="true">${index + 1}</div>
             <div class="chart-thumbnail">${thumbHtml}</div>
-            <div class="chart-info">
-                <h3>${escapeHtml(chart.name)}</h3>
-                <p>PDF Chart</p>
-            </div>
+                <div class="chart-info">
+                    <h3>${escapeHtml(chart.name)}</h3>
+                </div>
         `;
 
         // Delegate move control clicks
@@ -479,6 +486,7 @@ function switchToMode(mode) {
         organizeBtn.classList.add('active');
         // Start date/time ticker in the header and render organize grid
         startOrganizeTicker();
+        showOrganizeHeaderHelp();
         renderOrganizeMode();
     }
 }
