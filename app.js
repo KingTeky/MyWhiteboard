@@ -1,6 +1,3 @@
-// PDF.js worker configuration
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
 // Application State
 const AppState = {
     currentPage: 'landing',
@@ -137,15 +134,12 @@ function addChartToSession(name, dataUrl) {
         id: Date.now() + Math.random(),
         name: name,
         data: dataUrl,
-        pages: 0
+        pages: 1, // Default to 1 page (browser PDF viewer will handle pagination)
+        file: null
     };
     
-    // Load PDF to get page count
-    pdfjsLib.getDocument(dataUrl).promise.then(pdf => {
-        chart.pages = pdf.numPages;
-        AppState.charts.push(chart);
-        displayUploadedFile(chart);
-    });
+    AppState.charts.push(chart);
+    displayUploadedFile(chart);
 }
 
 function displayUploadedFile(chart) {
@@ -187,31 +181,15 @@ function refreshUploadedFilesList() {
 }
 
 // PDF Rendering
-async function renderCurrentChart() {
+function renderCurrentChart() {
     if (AppState.charts.length === 0) return;
     
     const chart = AppState.charts[AppState.currentChartIndex];
     document.getElementById('current-chart-name').textContent = chart.name;
     
-    const pdf = await pdfjsLib.getDocument(chart.data).promise;
-    const page = await pdf.getPage(AppState.currentPageNumber);
-    
-    const canvas = document.getElementById('pdf-canvas');
-    const context = canvas.getContext('2d');
-    AppState.canvas = canvas;
-    AppState.context = context;
-    
-    // Calculate scale to fit viewport
-    const viewport = page.getViewport({ scale: 1.0 });
-    const maxWidth = window.innerWidth - 200;
-    const maxHeight = window.innerHeight - 300;
-    let scale = Math.min(maxWidth / viewport.width, maxHeight / viewport.height);
-    scale = Math.min(scale, 2.0); // Max scale of 2.0
-    
-    const scaledViewport = page.getViewport({ scale: scale });
-    
-    canvas.width = scaledViewport.width;
-    canvas.height = scaledViewport.height;
+    // Use iframe to display PDF with native browser viewer
+    const pdfViewer = document.getElementById('pdf-viewer');
+    pdfViewer.src = chart.data + '#page=' + AppState.currentPageNumber;
     
     // Setup annotation canvas
     const annotationCanvas = document.getElementById('annotation-canvas');
@@ -219,21 +197,12 @@ async function renderCurrentChart() {
     AppState.annotationCanvas = annotationCanvas;
     AppState.annotationContext = annotationContext;
     
-    annotationCanvas.width = scaledViewport.width;
-    annotationCanvas.height = scaledViewport.height;
-    
-    // Render PDF page
-    await page.render({
-        canvasContext: context,
-        viewport: scaledViewport
-    }).promise;
-    
     // Restore annotations if any
     restoreAnnotations();
     
     // Update page indicator
     document.getElementById('page-indicator').textContent = 
-        `Page ${AppState.currentPageNumber} of ${chart.pages}`;
+        `Chart ${AppState.currentChartIndex + 1} of ${AppState.charts.length}`;
 }
 
 function renderOrganizeMode() {
@@ -251,50 +220,29 @@ function renderOrganizeMode() {
         
         card.innerHTML = `
             <div class="chart-thumbnail">
-                <canvas id="thumbnail-${chart.id}"></canvas>
+                <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
             </div>
             <div class="chart-info">
                 <h3>${chart.name}</h3>
-                <p>${chart.pages} page${chart.pages !== 1 ? 's' : ''}</p>
+                <p>PDF Chart</p>
             </div>
         `;
         
         grid.appendChild(card);
-        
-        // Render thumbnail
-        renderThumbnail(chart, `thumbnail-${chart.id}`);
     });
-}
-
-async function renderThumbnail(chart, canvasId) {
-    const pdf = await pdfjsLib.getDocument(chart.data).promise;
-    const page = await pdf.getPage(1);
-    
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    
-    const context = canvas.getContext('2d');
-    const viewport = page.getViewport({ scale: 1.0 });
-    
-    const scale = 200 / viewport.height;
-    const scaledViewport = page.getViewport({ scale: scale });
-    
-    canvas.width = scaledViewport.width;
-    canvas.height = scaledViewport.height;
-    
-    await page.render({
-        canvasContext: context,
-        viewport: scaledViewport
-    }).promise;
 }
 
 // Navigation
 function nextPage() {
-    const chart = AppState.charts[AppState.currentChartIndex];
-    if (AppState.currentPageNumber < chart.pages) {
-        AppState.currentPageNumber++;
-        renderCurrentChart();
-    }
+    // Page navigation is handled by the browser's PDF viewer
+    AppState.currentPageNumber++;
+    renderCurrentChart();
 }
 
 function prevPage() {
