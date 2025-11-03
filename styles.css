@@ -498,6 +498,12 @@ input[type="text"]::placeholder {
     transform: translateY(-4px);
 }
 
+.chart-card.drag-over {
+    border-color: var(--primary-color);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.14);
+    transform: translateY(-6px) scale(1.02);
+}
+
 .chart-thumbnail { width: 80%; height: 60%; display:flex; align-items:center; justify-content:center; }
 
 .chart-info { padding: 0.5rem; text-align: center; }
@@ -505,6 +511,33 @@ input[type="text"]::placeholder {
 .chart-info h3 { font-size: 0.95rem; margin: 0; color: var(--text-primary); }
 
 .chart-info p { font-size: 0.85rem; color: var(--text-secondary); margin: 0; }
+
+/* Move controls for accessibility */
+.chart-move-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.move-btn {
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 34px;
+    height: 28px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.move-btn:focus { outline: 2px solid var(--primary-color); }
+
+.chart-card { position: relative; }
 
 .chart-card {
     background: var(--background);
