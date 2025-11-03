@@ -399,6 +399,61 @@ function stopDrawing() {
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
+    // Apply theme preference for this client (independent per device/user)
+    function applyTheme(theme) {
+        if (theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        } else {
+            document.documentElement.removeAttribute('data-theme');
+        }
+
+        // Adjust annotation color for visibility in dark mode
+        if (theme === 'dark') {
+            ANNOTATION_CONFIG.strokeStyle = '#ffb86b'; // warm bright for dark bg
+        } else {
+            ANNOTATION_CONFIG.strokeStyle = '#ef4444'; // original red for light
+        }
+
+        // Invert PDF viewer when in dark theme to reduce brightness
+        const pdfViewer = document.getElementById('pdf-viewer');
+        if (pdfViewer) {
+            if (theme === 'dark') {
+                pdfViewer.style.filter = 'invert(1) hue-rotate(180deg)';
+            } else {
+                pdfViewer.style.filter = '';
+            }
+        }
+
+        // Update theme toggle icons
+        updateThemeToggleIcons(theme);
+    }
+
+    function updateThemeToggleIcons(theme) {
+        const toggles = document.querySelectorAll('.theme-toggle');
+        toggles.forEach(btn => {
+            if (theme === 'dark') {
+                // Sun icon for light (to indicate switching back)
+                btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <circle cx="12" cy="12" r="4"></circle>\n                        <path d="M12 2v2"></path>\n                        <path d="M12 20v2"></path>\n                        <path d="M4.93 4.93l1.41 1.41"></path>\n                        <path d="M17.66 17.66l1.41 1.41"></path>\n                        <path d="M2 12h2"></path>\n                        <path d="M20 12h2"></path>\n                        <path d="M4.93 19.07l1.41-1.41"></path>\n                        <path d="M17.66 6.34l1.41-1.41"></path>\n                    </svg>`;
+            } else {
+                // Moon icon for dark (to indicate switching to dark)
+                btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>\n                    </svg>`;
+            }
+        });
+    }
+
+    // Initialize theme from localStorage (per-client)
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    applyTheme(savedTheme);
+
+    // Attach click listeners to any theme toggle buttons (present on multiple pages)
+    document.querySelectorAll('.theme-toggle').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+            const next = current === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('theme', next);
+            applyTheme(next);
+        });
+    });
     // Landing page
     document.getElementById('create-session-btn').addEventListener('click', createSession);
     document.getElementById('join-session-btn').addEventListener('click', joinSession);
