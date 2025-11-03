@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyWhiteboard - Music Chart Manager</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Landing Page -->
+        <div id="landing-page" class="page active">
+            <div class="container">
+                <header>
+                    <h1>MyWhiteboard</h1>
+                    <p class="tagline">Modern Music Chart Management for Musicians</p>
+                </header>
+                
+                <div class="action-cards">
+                    <div class="card">
+                        <h2>Music Director</h2>
+                        <p>Create a new session and upload music charts</p>
+                        <button id="create-session-btn" class="btn btn-primary">Create Session</button>
+                    </div>
+                    
+                    <div class="card">
+                        <h2>Musician</h2>
+                        <p>Join an existing session with a code</p>
+                        <div class="input-group">
+                            <input type="text" id="session-code-input" placeholder="Enter session code" maxlength="6">
+                            <button id="join-session-btn" class="btn btn-secondary">Join Session</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MD Upload Page -->
+        <div id="upload-page" class="page">
+            <div class="container">
+                <header class="page-header">
+                    <h1>Upload Music Charts</h1>
+                    <div class="session-info">
+                        <span>Session Code: <strong id="session-code-display"></strong></span>
+                        <button id="start-session-btn" class="btn btn-primary">Start Session</button>
+                    </div>
+                </header>
+                
+                <div class="upload-area">
+                    <input type="file" id="pdf-upload" accept=".pdf" multiple hidden>
+                    <div id="drop-zone" class="drop-zone">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p>Drag and drop PDF files here</p>
+                        <p class="or-text">or</p>
+                        <button id="browse-files-btn" class="btn btn-secondary">Browse Files</button>
+                    </div>
+                </div>
+                
+                <div id="uploaded-files" class="uploaded-files"></div>
+            </div>
+        </div>
+
+        <!-- Viewer Page -->
+        <div id="viewer-page" class="page">
+            <div class="viewer-container">
+                <div class="viewer-header">
+                    <div class="viewer-title">
+                        <h2 id="current-chart-name">Chart Name</h2>
+                        <span id="page-indicator">Page 1 of 1</span>
+                    </div>
+                    <div class="viewer-controls">
+                        <button id="organize-mode-btn" class="btn btn-icon" title="Organize Mode">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="3" y="14" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect>
+                            </svg>
+                        </button>
+                        <button id="concert-mode-btn" class="btn btn-icon active" title="Concert Mode">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                            </svg>
+                        </button>
+                        <button id="annotation-btn" class="btn btn-icon" title="Toggle Annotations">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 19l7 2-2-7-7-7-5 5z"></path>
+                                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
+                            </svg>
+                        </button>
+                        <button id="leave-session-btn" class="btn btn-secondary">Leave</button>
+                    </div>
+                </div>
+
+                <!-- Concert Mode View -->
+                <div id="concert-view" class="view active">
+                    <div class="pdf-viewer-container">
+                        <div class="pdf-display">
+                            <iframe id="pdf-viewer"></iframe>
+                            <canvas id="annotation-canvas"></canvas>
+                        </div>
+                    </div>
+                    <div class="navigation-controls">
+                        <button id="prev-page-btn" class="btn btn-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="15 18 9 12 15 6"></polyline>
+                            </svg>
+                        </button>
+                        <button id="prev-chart-btn" class="btn btn-secondary">Previous Chart</button>
+                        <button id="next-chart-btn" class="btn btn-secondary">Next Chart</button>
+                        <button id="next-page-btn" class="btn btn-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9 18 15 12 9 6"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Organize Mode View -->
+                <div id="organize-view" class="view">
+                    <div id="charts-grid" class="charts-grid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
