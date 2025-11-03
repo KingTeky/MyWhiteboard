@@ -238,6 +238,57 @@ function renderCurrentChart() {
         `Chart ${AppState.currentChartIndex + 1} of ${AppState.charts.length}`;
 }
 
+// Generate a thumbnail for a PDF data URL using PDF.js (returns Promise<string dataURL>)
+function generateThumbnail(chart, maxWidth = 300) {
+    if (!window['pdfjsLib']) return Promise.resolve(null);
+    try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        return pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+            return pdf.getPage(1).then(page => {
+                const viewport = page.getViewport({ scale: 1 });
+                const scale = Math.min(maxWidth / viewport.width, 1);
+                const scaledViewport = page.getViewport({ scale });
+                const canvas = document.createElement('canvas');
+                canvas.width = scaledViewport.width;
+                canvas.height = scaledViewport.height;
+                const ctx = canvas.getContext('2d');
+                const renderContext = { canvasContext: ctx, viewport: scaledViewport };
+                return page.render(renderContext).promise.then(() => {
+                    try {
+                        return canvas.toDataURL('image/png');
+                    } catch (e) {
+                        return null;
+                    }
+                }).catch(() => null);
+            }).catch(() => null);
+        }).catch(() => null);
+    } catch (e) {
+        return Promise.resolve(null);
+    }
+}
+
+// Initialize SortableJS on the charts grid for touch-friendly drag/reorder
+let _sortableInstance = null;
+function initSortable() {
+    const grid = document.getElementById('charts-grid');
+    if (!grid) return;
+    if (window.Sortable) {
+        if (_sortableInstance) _sortableInstance.destroy();
+        _sortableInstance = Sortable.create(grid, {
+            animation: 150,
+            fallbackOnBody: true,
+            swapThreshold: 0.65,
+            onEnd: function(evt) {
+                const from = evt.oldIndex;
+                const to = evt.newIndex;
+                if (typeof from === 'number' && typeof to === 'number' && from !== to) {
+                    reorderCharts(from, to);
+                }
+            }
+        });
+    }
+}
+
 function renderOrganizeMode() {
     const grid = document.getElementById('charts-grid');
     grid.innerHTML = '';
@@ -245,66 +296,88 @@ function renderOrganizeMode() {
     AppState.charts.forEach((chart, index) => {
         const card = document.createElement('div');
         card.className = 'chart-card';
-        card.setAttribute('draggable', 'true');
         card.dataset.index = index;
+        card.tabIndex = 0; // make focusable for keyboard actions
 
-        // Click selects, double-click opens in concert mode
+        // Click selects
         card.addEventListener('click', () => {
-            // clear previous selection
             document.querySelectorAll('.chart-card').forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
             AppState.currentChartIndex = index;
         });
 
+        // Double click opens in concert mode
         card.addEventListener('dblclick', () => {
             AppState.currentPageNumber = 1;
             switchToMode('concert');
         });
 
-        // Drag handlers for reordering
-        card.addEventListener('dragstart', (e) => {
-            e.dataTransfer.setData('text/plain', index);
-            e.dataTransfer.effectAllowed = 'move';
-        });
-
-        card.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            card.classList.add('drag-over');
-        });
-
-        card.addEventListener('dragleave', () => {
-            card.classList.remove('drag-over');
-        });
-
-        card.addEventListener('drop', (e) => {
-            e.preventDefault();
-            const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
-            const toIndex = parseInt(card.dataset.index, 10);
-            card.classList.remove('drag-over');
-            if (!Number.isNaN(fromIndex) && !Number.isNaN(toIndex)) {
-                reorderCharts(fromIndex, toIndex);
+        // Keyboard interactions
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                card.click();
+            } else if (e.key === 'ArrowUp') {
+                // move up
+                e.preventDefault();
+                if (index > 0) reorderCharts(index, index - 1);
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (index < AppState.charts.length - 1) reorderCharts(index, index + 1);
             }
         });
 
+        // Thumbnail or placeholder
+        const thumbHtml = chart.thumb ? `<img src="${chart.thumb}" alt="${escapeHtml(chart.name)} thumbnail" style="max-width:100%;max-height:100%;object-fit:contain;">` : `
+            <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>`;
+
         card.innerHTML = `
-            <div class="chart-thumbnail">
-                <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                    <polyline points="10 9 9 9 8 9"></polyline>
-                </svg>
+            <div class="chart-move-controls">
+                <button class="move-btn" data-action="up" title="Move up" aria-label="Move up">▲</button>
+                <button class="move-btn" data-action="down" title="Move down" aria-label="Move down">▼</button>
             </div>
+            <div class="chart-thumbnail">${thumbHtml}</div>
             <div class="chart-info">
                 <h3>${escapeHtml(chart.name)}</h3>
                 <p>PDF Chart</p>
             </div>
         `;
 
+        // Delegate move control clicks
         grid.appendChild(card);
     });
+
+    // Hook up move buttons and make sure Sortable is initialized for touch
+    grid.querySelectorAll('.move-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const action = btn.dataset.action;
+            const card = btn.closest('.chart-card');
+            const idx = parseInt(card.dataset.index, 10);
+            if (action === 'up' && idx > 0) reorderCharts(idx, idx - 1);
+            if (action === 'down' && idx < AppState.charts.length - 1) reorderCharts(idx, idx + 1);
+        });
+    });
+
+    // generate thumbnails asynchronously where missing
+    AppState.charts.forEach((chart, i) => {
+        if (!chart.thumb && chart.data) {
+            generateThumbnail(chart, 240).then(dataUrl => {
+                if (dataUrl) {
+                    chart.thumb = dataUrl;
+                    // If still on organize mode, re-render to show thumbnail
+                    if (AppState.viewMode === 'organize') renderOrganizeMode();
+                }
+            });
+        }
+    });
+
+    // Initialize Sortable for touch-friendly drag/drop
+    initSortable();
 }
 
 function reorderCharts(fromIndex, toIndex) {
