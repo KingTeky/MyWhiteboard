@@ -390,6 +390,13 @@ input[type="text"]::placeholder {
     align-items: center;
 }
 
+/* Separate the leave button from the other mode controls to reduce accidental clicks */
+.viewer-controls #leave-session-btn {
+    margin-left: 12px; /* gap between mode buttons and leave */
+    padding-left: 12px; /* visual breathing room */
+    border-left: 1px solid var(--border);
+}
+
 /* Ensure the theme toggle sits at the top-right of pages where it's present
    (landing header, upload page-header, and viewer header). We make the
    header containers positioned so the absolute toggle positions correctly. */
