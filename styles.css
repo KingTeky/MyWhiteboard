@@ -20,6 +20,9 @@
     --hover: #f1f5f9;
     --success: #10b981;
     --danger: #ef4444;
+    /* order badge colors (theme-adaptive) */
+    --order-badge-bg: var(--primary-color);
+    --order-badge-color: #ffffff;
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
@@ -48,6 +51,9 @@ html[data-theme="dark"] {
     --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.6);
     --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.6);
     --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.6);
+    /* badge stands out on dark backgrounds: warm bright circle with dark text */
+    --order-badge-bg: #ffd36b;
+    --order-badge-color: #0b1220;
 }
 
 body {
@@ -530,8 +536,8 @@ input[type="text"]::placeholder {
     width: 30px;
     height: 30px;
     border-radius: 50%;
-    background: var(--primary-color);
-    color: white;
+    background: var(--order-badge-bg);
+    color: var(--order-badge-color);
     display: inline-flex;
     align-items: center;
     justify-content: center;
