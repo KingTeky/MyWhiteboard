@@ -103,7 +103,9 @@ body {
 .brand-icon {
     width: 36px;
     height: 36px;
-    color: var(--primary-color);
+    /* keep aspect and center; SVG file will carry its own colors */
+    display: block;
+    object-fit: contain;
     flex: 0 0 auto;
 }
 
