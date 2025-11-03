@@ -93,6 +93,20 @@ body {
     color: var(--text-secondary);
 }
 
+/* Brand heading: align clef icon with title */
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.brand-icon {
+    width: 36px;
+    height: 36px;
+    color: var(--primary-color);
+    flex: 0 0 auto;
+}
+
 .action-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
