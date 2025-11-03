@@ -47,22 +47,39 @@ function generateSessionCode() {
 }
 
 function createSession() {
-    AppState.sessionCode = generateSessionCode();
-    AppState.isDirector = true;
-    showPage('upload');
-    const uploadCodeEl = document.getElementById('session-code-display');
-    if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
-    const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
-    if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
-    
-    // Store session in localStorage for demo purposes
-    localStorage.setItem('currentSession', JSON.stringify({
-        code: AppState.sessionCode,
-        isDirector: true,
-        charts: []
-    }));
-    // Update UI to reflect director privileges
-    updateRoleUI();
+    // Try to create session server-side; fallback to client-only session if unavailable
+    (async () => {
+        try {
+            const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            if (res.ok) {
+                const j = await res.json();
+                AppState.sessionCode = j.code;
+                AppState.isDirector = true;
+                // Save director token locally to authenticate director actions later
+                localStorage.setItem(`session_${j.code}_directorToken`, j.directorToken);
+                // Save currentSession for demo persistence
+                localStorage.setItem('currentSession', JSON.stringify({ code: j.code, isDirector: true, charts: [] }));
+            } else {
+                // fallback
+                AppState.sessionCode = generateSessionCode();
+                AppState.isDirector = true;
+                localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: [] }));
+            }
+        } catch (e) {
+            // network/server unavailable - fallback to client-only session
+            AppState.sessionCode = generateSessionCode();
+            AppState.isDirector = true;
+            localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: [] }));
+        }
+
+        showPage('upload');
+        const uploadCodeEl = document.getElementById('session-code-display');
+        if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
+        const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
+        if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
+        // Update UI to reflect director privileges
+        updateRoleUI();
+    })();
 }
 
 function joinSession() {
@@ -83,27 +100,43 @@ function joinSession() {
     }
     
     AppState.sessionCode = code;
-    AppState.isDirector = false;
+    // If this client has the saved director token for this session, treat as director locally
+    const localToken = localStorage.getItem(`session_${code}_directorToken`);
+    AppState.isDirector = !!localToken;
 
     const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
     if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
-    // Update UI for attendee (hide director-only controls)
-    updateRoleUI();
-    
-    // Load session data
-    if (sessionData) {
-        const session = JSON.parse(sessionData);
-        AppState.charts = session.charts || [];
-    }
-    
-    if (AppState.charts.length > 0) {
-        showPage('viewer');
-        // Attendees should see Live mode by default
-        switchToMode('live');
-        renderCurrentChart();
-    } else {
-        alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
-    }
+
+    // Try to fetch session from server; fall back to localStorage
+    (async () => {
+        try {
+            const res = await fetch(`/api/sessions/${code}`);
+            if (res.ok) {
+                const j = await res.json();
+                AppState.charts = j.charts || [];
+            } else if (sessionData) {
+                const session = JSON.parse(sessionData);
+                AppState.charts = session.charts || [];
+            }
+        } catch (e) {
+            if (sessionData) {
+                const session = JSON.parse(sessionData);
+                AppState.charts = session.charts || [];
+            }
+        }
+
+        // Update UI for attendee (hide director-only controls)
+        updateRoleUI();
+
+        if (AppState.charts.length > 0) {
+            showPage('viewer');
+            // Attendees should see Live mode by default
+            switchToMode('live');
+            renderCurrentChart();
+        } else {
+            alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
+        }
+    })();
 }
 
 function startSession() {
@@ -125,32 +158,42 @@ function startSession() {
         console.info('Generated session code for startSession:', AppState.sessionCode);
     }
 
-    // Save session data (both named session and currentSession for demo flows)
-    try {
-        localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({
-            code: AppState.sessionCode,
-            charts: AppState.charts
-        }));
-        localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
-    } catch (err) {
-        console.error('Failed to save session data to localStorage:', err);
-    }
+    // Save session data: try server first (requires director token), fallback to localStorage
+    (async () => {
+        const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+        if (directorToken) {
+            try {
+                const res = await fetch(`/api/sessions/${AppState.sessionCode}/charts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
+                    body: JSON.stringify({ charts: AppState.charts })
+                });
+                if (!res.ok) throw new Error('server save failed');
+                localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: AppState.charts }));
+            } catch (e) {
+                console.warn('Failed to save charts to server, falling back to localStorage', e);
+                try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (err) {}
+            }
+        } else {
+            try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (err) {}
+        }
 
-    // Navigate to viewer and render the first chart, but guard rendering errors
-    try {
-        // Ensure this user is marked as the director when starting
-        AppState.isDirector = true;
-        // Update role-based UI (show edit/organize for directors)
-        updateRoleUI();
-        showPage('viewer');
-        // Ensure viewer shows edit mode for directors
-        switchToMode('edit');
-        renderCurrentChart();
-        console.log('startSession completed: viewer shown');
-    } catch (err) {
-        console.error('Error while rendering viewer after startSession:', err);
-        alert('An error occurred while starting the session. Check the console for details.');
-    }
+        // Navigate to viewer and render the first chart, but guard rendering errors
+        try {
+            // Ensure this user is marked as the director when starting
+            AppState.isDirector = true;
+            // Update role-based UI (show edit/organize for directors)
+            updateRoleUI();
+            showPage('viewer');
+            // Ensure viewer shows edit mode for directors
+            switchToMode('edit');
+            renderCurrentChart();
+            console.log('startSession completed: viewer shown');
+        } catch (err) {
+            console.error('Error while rendering viewer after startSession:', err);
+            alert('An error occurred while starting the session. Check the console for details.');
+        }
+    })();
 }
 
 function leaveSession() {
@@ -314,52 +357,79 @@ function renderLiveMode() {
     if (!window['pdfjsLib']) return;
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
     pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+        const state = { rendered: {} };
+
+        // Create wrappers for each page; actual rendering happens lazily when visible
         for (let p = 1; p <= pdf.numPages; p++) {
-            // render main page canvas
-            pdf.getPage(p).then(page => {
-                const viewport = page.getViewport({ scale: 1 });
-                const scale = Math.min(900 / viewport.width, 1);
-                const scaled = page.getViewport({ scale });
-                const canvas = document.createElement('canvas');
-                canvas.width = scaled.width;
-                canvas.height = scaled.height;
-                const ctx = canvas.getContext('2d');
-                page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
-                    // apply saved annotation for this page if any
-                    const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${p}`;
-                    const ann = AppState.annotations[key];
-                    if (ann) {
-                        const img = new Image();
-                        img.onload = () => {
-                            try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (e) {}
-                        };
-                        img.src = ann;
-                    }
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'live-page-wrapper';
-                    wrapper.dataset.page = p;
-                    wrapper.appendChild(canvas);
-                    pagesContainer.appendChild(wrapper);
-                });
-                // render thumbnail
-                const tScale = Math.min(100 / viewport.width, 0.2);
-                const tCanvas = document.createElement('canvas');
-                tCanvas.width = Math.round(viewport.width * tScale);
-                tCanvas.height = Math.round(viewport.height * tScale);
-                const tCtx = tCanvas.getContext('2d');
-                page.render({ canvasContext: tCtx, viewport: page.getViewport({ scale: tScale }) }).promise.then(() => {
-                    const thumb = document.createElement('div');
-                    thumb.className = 'live-thumb';
-                    thumb.appendChild(tCanvas);
-                    thumb.addEventListener('click', () => {
-                        const wrappers = pagesContainer.querySelectorAll('.live-page-wrapper');
-                        const target = Array.from(wrappers).find(w => parseInt(w.dataset.page,10) === p);
-                        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    });
-                    thumbsContainer.appendChild(thumb);
-                }).catch(() => {});
-            }).catch(() => {});
+            const wrapper = document.createElement('div');
+            wrapper.className = 'live-page-wrapper';
+            wrapper.dataset.page = p;
+            wrapper.dataset.rendered = '0';
+            wrapper.style.minHeight = '200px';
+            pagesContainer.appendChild(wrapper);
         }
+
+        // IntersectionObserver to lazy-render pages when approaching viewport
+        const observer = new IntersectionObserver((entries, obs) => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                const w = entry.target;
+                const p = parseInt(w.dataset.page, 10);
+                if (w.dataset.rendered === '1') { obs.unobserve(w); return; }
+
+                // render the page
+                pdf.getPage(p).then(page => {
+                    const viewport = page.getViewport({ scale: 1 });
+                    const scale = Math.min(900 / viewport.width, 1);
+                    const scaled = page.getViewport({ scale });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = scaled.width;
+                    canvas.height = scaled.height;
+                    const ctx = canvas.getContext('2d');
+                    page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
+                        // apply saved annotation for this page if any
+                        const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${p}`;
+                        const ann = AppState.annotations[key];
+                        if (ann) {
+                            const img = new Image();
+                            img.onload = () => {
+                                try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (e) {}
+                            };
+                            img.src = ann;
+                        }
+                        // append canvas to wrapper
+                        w.appendChild(canvas);
+
+                        // generate and append thumbnail (small canvas)
+                        try {
+                            const tScale = Math.min(120 / viewport.width, 0.18);
+                            const tCanvas = document.createElement('canvas');
+                            tCanvas.width = Math.round(viewport.width * tScale);
+                            tCanvas.height = Math.round(viewport.height * tScale);
+                            const tCtx = tCanvas.getContext('2d');
+                            page.render({ canvasContext: tCtx, viewport: page.getViewport({ scale: tScale }) }).promise.then(() => {
+                                const thumb = document.createElement('div');
+                                thumb.className = 'live-thumb';
+                                thumb.appendChild(tCanvas);
+                                thumb.addEventListener('click', () => {
+                                    if (w) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                });
+                                thumbsContainer.appendChild(thumb);
+                            }).catch(() => {});
+                        } catch (e) {
+                            // ignore thumbnail generation errors
+                        }
+
+                        w.dataset.rendered = '1';
+                        obs.unobserve(w);
+                    }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
+                }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
+            });
+        }, { root: pagesContainer, rootMargin: '400px 0px', threshold: 0.01 });
+
+        // Observe all wrappers
+        const wrappers = pagesContainer.querySelectorAll('.live-page-wrapper');
+        wrappers.forEach(w => observer.observe(w));
     }).catch(() => {});
 }
 
@@ -565,12 +635,32 @@ function reorderCharts(fromIndex, toIndex) {
 }
 
 function saveSessionCharts() {
-    if (!AppState.sessionCode) {
-        // store as currentSession for demo flows
-        localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
-    } else {
-        localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts }));
-    }
+    // Persist charts: try server if director token exists, otherwise use localStorage
+    (async () => {
+        if (!AppState.sessionCode) {
+            // store as currentSession for demo flows
+            localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
+            return;
+        }
+        const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+        if (directorToken) {
+            try {
+                const res = await fetch(`/api/sessions/${AppState.sessionCode}/charts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
+                    body: JSON.stringify({ charts: AppState.charts })
+                });
+                if (res.ok) {
+                    localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
+                    return;
+                }
+            } catch (e) {
+                console.warn('Failed to save charts to server:', e);
+            }
+        }
+        // fallback
+        try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+    })();
 }
 
 // Navigation
