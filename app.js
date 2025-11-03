@@ -341,6 +341,7 @@ function renderOrganizeMode() {
                 <button class="move-btn" data-action="up" title="Move up" aria-label="Move up">▲</button>
                 <button class="move-btn" data-action="down" title="Move down" aria-label="Move down">▼</button>
             </div>
+            <div class="chart-order-badge" aria-hidden="true">${index + 1}</div>
             <div class="chart-thumbnail">${thumbHtml}</div>
             <div class="chart-info">
                 <h3>${escapeHtml(chart.name)}</h3>
