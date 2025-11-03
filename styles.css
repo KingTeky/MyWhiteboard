@@ -549,7 +549,7 @@ input[type="text"]::placeholder {
 /* Remove badge: shown on selected thumbnail to allow deletion */
 .chart-remove-badge {
     position: absolute;
-    top: 8px;
+    bottom: 8px;
     right: 8px;
     width: 30px;
     height: 30px;
@@ -563,6 +563,7 @@ input[type="text"]::placeholder {
     box-shadow: 0 4px 10px rgba(0,0,0,0.12);
     font-size: 1rem;
     cursor: pointer;
+    z-index: 6; /* sit above thumbnail content */
 }
 
 .chart-card.selected .chart-remove-badge {
