@@ -398,8 +398,7 @@ header, .page-header, .viewer-header {
 }
 
 header .theme-toggle,
-.page-header .theme-toggle,
-.viewer-header .theme-toggle {
+.page-header .theme-toggle {
     position: absolute;
     top: 12px;
     right: 12px;
