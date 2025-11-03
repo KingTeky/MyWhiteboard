@@ -390,6 +390,15 @@ input[type="text"]::placeholder {
     align-items: center;
 }
 
+/* Small session code display under the viewer controls */
+.viewer-session-code {
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-top: 6px;
+    margin-right: 0.5rem; /* align with control group */
+}
+
 /* Views */
 .view {
     display: none;

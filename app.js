@@ -49,7 +49,10 @@ function createSession() {
     AppState.sessionCode = generateSessionCode();
     AppState.isDirector = true;
     showPage('upload');
-    document.getElementById('session-code-display').textContent = AppState.sessionCode;
+    const uploadCodeEl = document.getElementById('session-code-display');
+    if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
+    const viewerCodeEl = document.getElementById('viewer-session-code');
+    if (viewerCodeEl) viewerCodeEl.textContent = `Session: ${AppState.sessionCode}`;
     
     // Store session in localStorage for demo purposes
     localStorage.setItem('currentSession', JSON.stringify({
@@ -78,6 +81,9 @@ function joinSession() {
     
     AppState.sessionCode = code;
     AppState.isDirector = false;
+
+    const viewerCodeEl = document.getElementById('viewer-session-code');
+    if (viewerCodeEl) viewerCodeEl.textContent = `Session: ${AppState.sessionCode}`;
     
     // Load session data
     if (sessionData) {
@@ -107,6 +113,8 @@ function startSession() {
         AppState.isDirector = true;
         const codeEl = document.getElementById('session-code-display');
         if (codeEl) codeEl.textContent = AppState.sessionCode;
+        const viewerCodeEl = document.getElementById('viewer-session-code');
+        if (viewerCodeEl) viewerCodeEl.textContent = `Session: ${AppState.sessionCode}`;
         console.info('Generated session code for startSession:', AppState.sessionCode);
     }
 
@@ -142,6 +150,10 @@ function leaveSession() {
         AppState.currentPageNumber = 1;
         AppState.sessionCode = null;
         AppState.isDirector = false;
+        const viewerCodeEl = document.getElementById('viewer-session-code');
+        if (viewerCodeEl) viewerCodeEl.textContent = '';
+        const uploadCodeEl = document.getElementById('session-code-display');
+        if (uploadCodeEl) uploadCodeEl.textContent = '';
         showPage('landing');
     }
 }
