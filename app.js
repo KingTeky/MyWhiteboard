@@ -1,3 +1,11 @@
+// Annotation Constants
+const ANNOTATION_CONFIG = {
+    strokeStyle: '#ef4444',
+    lineWidth: 3,
+    lineCap: 'round',
+    lineJoin: 'round'
+};
+
 // Application State
 const AppState = {
     currentPage: 'landing',
@@ -22,8 +30,10 @@ const AppState = {
 function generateSessionCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';
+    const randomValues = new Uint8Array(6);
+    crypto.getRandomValues(randomValues);
     for (let i = 0; i < 6; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+        code += chars.charAt(randomValues[i] % chars.length);
     }
     return code;
 }
@@ -163,14 +173,23 @@ function displayUploadedFile(chart) {
             </div>
         </div>
         <div class="file-actions">
-            <button onclick="removeChart('${chart.id}')">Remove</button>
+            <button data-chart-id="${chart.id}">Remove</button>
         </div>
     `;
+    
+    // Add event listener to remove button
+    const removeBtn = fileItem.querySelector('button[data-chart-id]');
+    removeBtn.addEventListener('click', function() {
+        removeChart(this.dataset.chartId);
+    });
+    
     container.appendChild(fileItem);
 }
 
 function removeChart(chartId) {
-    AppState.charts = AppState.charts.filter(chart => chart.id != chartId);
+    // Convert to number since data attributes are strings
+    const id = typeof chartId === 'string' ? parseFloat(chartId) : chartId;
+    AppState.charts = AppState.charts.filter(chart => chart.id !== id);
     refreshUploadedFilesList();
 }
 
@@ -189,11 +208,15 @@ function renderCurrentChart() {
     
     // Use iframe to display PDF with native browser viewer
     const pdfViewer = document.getElementById('pdf-viewer');
-    pdfViewer.src = chart.data + '#page=' + AppState.currentPageNumber;
+    pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`;
     
     // Setup annotation canvas
     const annotationCanvas = document.getElementById('annotation-canvas');
     const annotationContext = annotationCanvas.getContext('2d');
+    if (!annotationContext) {
+        console.error('Could not get 2d context for annotation canvas');
+        return;
+    }
     AppState.annotationCanvas = annotationCanvas;
     AppState.annotationContext = annotationContext;
     
@@ -346,10 +369,10 @@ function draw(e) {
     const y = e.clientY - rect.top;
     
     const ctx = AppState.annotationContext;
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    ctx.strokeStyle = ANNOTATION_CONFIG.strokeStyle;
+    ctx.lineWidth = ANNOTATION_CONFIG.lineWidth;
+    ctx.lineCap = ANNOTATION_CONFIG.lineCap;
+    ctx.lineJoin = ANNOTATION_CONFIG.lineJoin;
     
     ctx.beginPath();
     ctx.moveTo(AppState.lastX, AppState.lastY);
