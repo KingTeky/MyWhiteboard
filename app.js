@@ -156,7 +156,10 @@ function addChartToSession(name, dataUrl) {
     };
     
     AppState.charts.push(chart);
+    // Update upload list (if visible) and organize grid (if active)
     displayUploadedFile(chart);
+    if (AppState.viewMode === 'organize') renderOrganizeMode();
+    saveSessionCharts();
 }
 
 function displayUploadedFile(chart) {
@@ -238,16 +241,52 @@ function renderCurrentChart() {
 function renderOrganizeMode() {
     const grid = document.getElementById('charts-grid');
     grid.innerHTML = '';
-    
+
     AppState.charts.forEach((chart, index) => {
         const card = document.createElement('div');
         card.className = 'chart-card';
-        card.onclick = () => {
+        card.setAttribute('draggable', 'true');
+        card.dataset.index = index;
+
+        // Click selects, double-click opens in concert mode
+        card.addEventListener('click', () => {
+            // clear previous selection
+            document.querySelectorAll('.chart-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
             AppState.currentChartIndex = index;
+        });
+
+        card.addEventListener('dblclick', () => {
             AppState.currentPageNumber = 1;
             switchToMode('concert');
-        };
-        
+        });
+
+        // Drag handlers for reordering
+        card.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', index);
+            e.dataTransfer.effectAllowed = 'move';
+        });
+
+        card.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            card.classList.add('drag-over');
+        });
+
+        card.addEventListener('dragleave', () => {
+            card.classList.remove('drag-over');
+        });
+
+        card.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const toIndex = parseInt(card.dataset.index, 10);
+            card.classList.remove('drag-over');
+            if (!Number.isNaN(fromIndex) && !Number.isNaN(toIndex)) {
+                reorderCharts(fromIndex, toIndex);
+            }
+        });
+
         card.innerHTML = `
             <div class="chart-thumbnail">
                 <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
@@ -263,9 +302,27 @@ function renderOrganizeMode() {
                 <p>PDF Chart</p>
             </div>
         `;
-        
+
         grid.appendChild(card);
     });
+}
+
+function reorderCharts(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+    const [item] = AppState.charts.splice(fromIndex, 1);
+    AppState.charts.splice(toIndex, 0, item);
+    // after reordering, update any UI and persist
+    renderOrganizeMode();
+    saveSessionCharts();
+}
+
+function saveSessionCharts() {
+    if (!AppState.sessionCode) {
+        // store as currentSession for demo flows
+        localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
+    } else {
+        localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts }));
+    }
 }
 
 // Navigation
@@ -472,6 +529,15 @@ document.addEventListener('DOMContentLoaded', function() {
     fileInput.addEventListener('change', function(e) {
         handleFileSelect(e.target.files);
     });
+
+    // Organize view: allow adding charts from here as well
+    const addChartsBtn = document.getElementById('add-charts-btn');
+    if (addChartsBtn) {
+        addChartsBtn.addEventListener('click', () => {
+            // reuse the hidden file input to add charts
+            fileInput.click();
+        });
+    }
     
     dropZone.addEventListener('dragover', function(e) {
         e.preventDefault();
