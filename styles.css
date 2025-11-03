@@ -390,6 +390,22 @@ input[type="text"]::placeholder {
     align-items: center;
 }
 
+/* Ensure the theme toggle sits at the top-right of pages where it's present
+   (landing header, upload page-header, and viewer header). We make the
+   header containers positioned so the absolute toggle positions correctly. */
+header, .page-header, .viewer-header {
+    position: relative;
+}
+
+header .theme-toggle,
+.page-header .theme-toggle,
+.viewer-header .theme-toggle {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 20;
+}
+
 /* Small session code display under the viewer controls */
 .viewer-session-code {
     text-align: right;
