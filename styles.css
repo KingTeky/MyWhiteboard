@@ -98,15 +98,19 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    /* keep the brand inline with surrounding content */
+    vertical-align: middle;
 }
 
 .brand-icon {
-    width: 36px;
-    height: 36px;
-    /* keep aspect and center; SVG file will carry its own colors */
+    /* make the clef slightly larger than the h1 text so the dots line up visually */
+    height: 1.25em; /* relative to the h1 font-size */
+    width: auto;
     display: block;
     object-fit: contain;
     flex: 0 0 auto;
+    /* nudge the icon upward a little so the clef dots align with the title text baseline */
+    transform: translateY(-0.12em);
 }
 
 .action-cards {
