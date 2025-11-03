@@ -522,6 +522,24 @@ input[type="text"]::placeholder {
     gap: 6px;
 }
 
+/* Order badge shown on organize thumbnails to indicate playback order */
+.chart-order-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+    font-size: 0.9rem;
+}
+
 .move-btn {
     background: var(--background);
     border: 1px solid var(--border);
