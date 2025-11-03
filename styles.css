@@ -15,6 +15,8 @@
     --text-primary: #0f172a;
     --text-secondary: #475569;
     --border: #e2e8f0;
+    /* color used specifically for theme-toggle icons (can be bright in dark mode) */
+    --toggle-icon-color: var(--text-primary);
     --hover: #f1f5f9;
     --success: #10b981;
     --danger: #ef4444;
@@ -39,6 +41,9 @@ html[data-theme="dark"] {
     --text-primary: #e6eef8;
     --text-secondary: #94a3b8;
     --border: rgba(255,255,255,0.06);
+    /* make the theme toggle icon bright in dark mode so it stands out
+       (users can see the 'sun' / light icon clearly and know how to switch back) */
+    --toggle-icon-color: #ffd36b;
     --hover: rgba(255,255,255,0.02);
     --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.6);
     --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.6);
@@ -175,6 +180,20 @@ body {
 
 .btn-icon svg {
     color: inherit;
+}
+
+/* Theme-toggle specific icon styling: use a dedicated color variable so the
+   'light' (sun) icon can be bright when in dark mode while keeping other
+   icons unchanged. SVGs use stroke="currentColor" already in markup. */
+.theme-toggle {
+    color: var(--toggle-icon-color);
+}
+
+.theme-toggle svg {
+    color: inherit;
+    /* ensure strokes pick up the current color */
+    stroke: currentColor;
+    fill: none;
 }
 
 /* Input Group */
