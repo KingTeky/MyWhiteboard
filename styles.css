@@ -546,6 +546,33 @@ input[type="text"]::placeholder {
     font-size: 0.9rem;
 }
 
+/* Remove badge: shown on selected thumbnail to allow deletion */
+.chart-remove-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--danger);
+    color: #fff;
+    display: none; /* only show when selected */
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.chart-card.selected .chart-remove-badge {
+    display: inline-flex;
+}
+
+.chart-remove-badge:focus {
+    outline: 2px solid rgba(255,255,255,0.3);
+}
+
 .move-btn {
     background: var(--background);
     border: 1px solid var(--border);

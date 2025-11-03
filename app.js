@@ -226,6 +226,19 @@ function removeChart(chartId) {
     const id = typeof chartId === 'string' ? parseFloat(chartId) : chartId;
     AppState.charts = AppState.charts.filter(chart => chart.id !== id);
     refreshUploadedFilesList();
+    // Persist and update organize view if active
+    try {
+        saveSessionCharts();
+    } catch (err) {
+        console.error('Error saving session after removeChart:', err);
+    }
+    if (AppState.viewMode === 'organize') {
+        // adjust current chart index if needed
+        if (AppState.currentChartIndex >= AppState.charts.length) {
+            AppState.currentChartIndex = Math.max(0, AppState.charts.length - 1);
+        }
+        renderOrganizeMode();
+    }
 }
 
 function refreshUploadedFilesList() {
@@ -401,6 +414,7 @@ function renderOrganizeMode() {
                 <button class="move-btn" data-action="down" title="Move down" aria-label="Move down">▼</button>
             </div>
             <div class="chart-order-badge" aria-hidden="true">${index + 1}</div>
+            <div class="chart-remove-badge" role="button" tabindex="0" aria-label="Remove chart" data-chart-id="${chart.id}">−</div>
             <div class="chart-thumbnail">${thumbHtml}</div>
                 <div class="chart-info">
                     <h3>${escapeHtml(chart.name)}</h3>
@@ -419,6 +433,21 @@ function renderOrganizeMode() {
             const idx = parseInt(card.dataset.index, 10);
             if (action === 'up' && idx > 0) reorderCharts(idx, idx - 1);
             if (action === 'down' && idx < AppState.charts.length - 1) reorderCharts(idx, idx + 1);
+        });
+    });
+
+    // Hook up remove badge buttons (only visible when card is selected)
+    grid.querySelectorAll('.chart-remove-badge').forEach(b => {
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = b.dataset.chartId;
+            if (id) removeChart(id);
+        });
+        b.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                b.click();
+            }
         });
     });
 
