@@ -25,6 +25,11 @@
     --file-btn-border: var(--border);
     --file-btn-color: var(--text-primary);
     --file-btn-hover-bg: var(--hover);
+    /* neutral control/button colors for inline controls (icons, small buttons) */
+    --control-bg: var(--background);
+    --control-border: var(--border);
+    --control-color: var(--text-primary);
+    --control-hover-bg: var(--hover);
     /* order badge colors (theme-adaptive) */
     --order-badge-bg: var(--primary-color);
     --order-badge-color: #ffffff;
@@ -64,6 +69,11 @@ html[data-theme="dark"] {
     --file-btn-border: rgba(255,255,255,0.12);
     --file-btn-color: var(--text-primary);
     --file-btn-hover-bg: rgba(255,255,255,0.02);
+    /* neutral control/button adjustments for dark theme: muted light outlines and readable text */
+    --control-bg: var(--card-background);
+    --control-border: rgba(255,255,255,0.08);
+    --control-color: var(--text-primary);
+    --control-hover-bg: rgba(255,255,255,0.03);
 }
 
 body {
@@ -171,6 +181,9 @@ body {
     cursor: pointer;
     transition: background-color 0.2s ease, transform 0.1s ease;
     outline: none;
+
+    /* default control color for non-primary buttons */
+    color: var(--control-color);
 }
 
 .btn:active {
@@ -197,15 +210,15 @@ body {
 
 .btn-icon {
     padding: 0.5rem;
-    background: var(--background);
-    border: 1px solid var(--border);
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
     display: inline-flex;
     align-items: center;
     justify-content: center;
 }
 
 .btn-icon:hover {
-    background: var(--hover);
+    background: var(--control-hover-bg);
 }
 
 .btn-icon.active {
