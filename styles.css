@@ -470,13 +470,51 @@ header .theme-toggle,
     display: flex;
 }
 
-/* Concert Mode */
-#concert-view {
+/* Edit Mode (previously Concert Mode) */
+#edit-view {
     flex-direction: column;
     align-items: center;
     justify-content: center;
     background: var(--surface);
     padding: 2rem;
+}
+
+/* Live Mode: continuous vertical pages with thumbnails */
+#live-view {
+    padding: 1rem 2rem;
+}
+
+.live-container {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.live-pages {
+    flex: 1 1 auto;
+    max-width: 900px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.live-thumbs {
+    width: 140px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.live-thumb {
+    width: 100px;
+    height: 140px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
 }
 
 .pdf-viewer-container {

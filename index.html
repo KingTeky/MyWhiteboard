@@ -103,8 +103,15 @@
                                 <rect x="14" y="14" width="7" height="7"></rect>
                             </svg>
                         </button>
-                        <button id="concert-mode-btn" class="btn btn-icon active" title="Concert Mode">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <!-- Live mode: attendee-facing view -->
+                        <button id="live-mode-btn" class="btn btn-icon" title="Live Mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 3v18l15-9z"></path>
+                            </svg>
+                        </button>
+                        <!-- Edit mode: Music Director can annotate/print/save -->
+                        <button id="edit-mode-btn" class="btn btn-icon active" title="Edit Mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="3" width="18" height="18" rx="2"></rect>
                             </svg>
                         </button>
@@ -135,8 +142,8 @@
                     
                 </div>
 
-                <!-- Concert Mode View -->
-                <div id="concert-view" class="view active">
+                <!-- Edit Mode View (previously Concert Mode) -->
+                <div id="edit-view" class="view active">
                     <div class="pdf-viewer-container">
                         <div class="pdf-display">
                             <iframe id="pdf-viewer"></iframe>
@@ -156,6 +163,14 @@
                                 <polyline points="9 18 15 12 9 6"></polyline>
                             </svg>
                         </button>
+                    </div>
+                </div>
+
+                <!-- Live Mode View: attendee-facing continuous scroll with thumbnails -->
+                <div id="live-view" class="view">
+                    <div class="live-container">
+                        <div id="live-pages" class="live-pages"></div>
+                        <div id="live-thumbs" class="live-thumbs"></div>
                     </div>
                 </div>
 
