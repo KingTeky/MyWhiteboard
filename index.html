@@ -93,6 +93,13 @@
                                 <circle cx="12" cy="12" r="5"></circle>
                             </svg>
                         </button>
+                        <!-- Add charts button placed left of organize button; icon-only to match other controls -->
+                        <button id="add-charts-btn" class="btn btn-icon" title="Add Charts" aria-label="Add Charts">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                        </button>
                         <button id="organize-mode-btn" class="btn btn-icon" title="Organize Mode">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="3" width="7" height="7"></rect>
@@ -143,9 +150,6 @@
                 <!-- Organize Mode View -->
                 <div id="organize-view" class="view">
                     <div class="organize-controls">
-                        <div class="organize-buttons">
-                            <button id="add-charts-btn" class="btn btn-secondary">Add Charts</button>
-                        </div>
                         <p class="organize-help">Drag and drop items to reorder. Click to select; double-click to open.</p>
                     </div>
                     <div id="charts-grid" class="charts-grid"></div>
