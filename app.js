@@ -21,7 +21,8 @@ const AppState = {
     charts: [],
     currentChartIndex: 0,
     currentPageNumber: 1,
-    viewMode: 'concert', // 'concert' or 'organize'
+    // viewMode: 'edit' | 'live' | 'organize'
+    viewMode: 'edit',
     annotationMode: false,
     annotations: {},
     canvas: null,
@@ -60,6 +61,8 @@ function createSession() {
         isDirector: true,
         charts: []
     }));
+    // Update UI to reflect director privileges
+    updateRoleUI();
 }
 
 function joinSession() {
@@ -84,6 +87,8 @@ function joinSession() {
 
     const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
     if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
+    // Update UI for attendee (hide director-only controls)
+    updateRoleUI();
     
     // Load session data
     if (sessionData) {
@@ -93,6 +98,8 @@ function joinSession() {
     
     if (AppState.charts.length > 0) {
         showPage('viewer');
+        // Attendees should see Live mode by default
+        switchToMode('live');
         renderCurrentChart();
     } else {
         alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
@@ -131,9 +138,13 @@ function startSession() {
 
     // Navigate to viewer and render the first chart, but guard rendering errors
     try {
+        // Ensure this user is marked as the director when starting
+        AppState.isDirector = true;
+        // Update role-based UI (show edit/organize for directors)
+        updateRoleUI();
         showPage('viewer');
-        // Ensure viewer shows concert mode by default
-        switchToMode('concert');
+        // Ensure viewer shows edit mode for directors
+        switchToMode('edit');
         renderCurrentChart();
         console.log('startSession completed: viewer shown');
     } catch (err) {
@@ -154,6 +165,8 @@ function leaveSession() {
     if (viewerCodeTextEl) viewerCodeTextEl.textContent = '';
         const uploadCodeEl = document.getElementById('session-code-display');
         if (uploadCodeEl) uploadCodeEl.textContent = '';
+        // Update UI to a neutral state (no director controls visible)
+        updateRoleUI();
         showPage('landing');
     }
 }
@@ -266,9 +279,9 @@ function renderCurrentChart() {
     const chart = AppState.charts[AppState.currentChartIndex];
     document.getElementById('current-chart-name').textContent = chart.name;
     
-    // Use iframe to display PDF with native browser viewer
+    // Use iframe to display PDF with native browser viewer (Edit mode)
     const pdfViewer = document.getElementById('pdf-viewer');
-    pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`;
+    if (pdfViewer) pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`;
     
     // Setup annotation canvas
     const annotationCanvas = document.getElementById('annotation-canvas');
@@ -286,6 +299,68 @@ function renderCurrentChart() {
     // Update page indicator
     document.getElementById('page-indicator').textContent = 
         `Chart ${AppState.currentChartIndex + 1} of ${AppState.charts.length}`;
+}
+
+// Render Live mode: continuous vertical pages with annotations and thumbnails
+function renderLiveMode() {
+    if (AppState.charts.length === 0) return;
+    const chart = AppState.charts[AppState.currentChartIndex];
+    const pagesContainer = document.getElementById('live-pages');
+    const thumbsContainer = document.getElementById('live-thumbs');
+    if (!pagesContainer || !thumbsContainer || !chart || !chart.data) return;
+    pagesContainer.innerHTML = '';
+    thumbsContainer.innerHTML = '';
+
+    if (!window['pdfjsLib']) return;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+        for (let p = 1; p <= pdf.numPages; p++) {
+            // render main page canvas
+            pdf.getPage(p).then(page => {
+                const viewport = page.getViewport({ scale: 1 });
+                const scale = Math.min(900 / viewport.width, 1);
+                const scaled = page.getViewport({ scale });
+                const canvas = document.createElement('canvas');
+                canvas.width = scaled.width;
+                canvas.height = scaled.height;
+                const ctx = canvas.getContext('2d');
+                page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
+                    // apply saved annotation for this page if any
+                    const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${p}`;
+                    const ann = AppState.annotations[key];
+                    if (ann) {
+                        const img = new Image();
+                        img.onload = () => {
+                            try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (e) {}
+                        };
+                        img.src = ann;
+                    }
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'live-page-wrapper';
+                    wrapper.dataset.page = p;
+                    wrapper.appendChild(canvas);
+                    pagesContainer.appendChild(wrapper);
+                });
+                // render thumbnail
+                const tScale = Math.min(100 / viewport.width, 0.2);
+                const tCanvas = document.createElement('canvas');
+                tCanvas.width = Math.round(viewport.width * tScale);
+                tCanvas.height = Math.round(viewport.height * tScale);
+                const tCtx = tCanvas.getContext('2d');
+                page.render({ canvasContext: tCtx, viewport: page.getViewport({ scale: tScale }) }).promise.then(() => {
+                    const thumb = document.createElement('div');
+                    thumb.className = 'live-thumb';
+                    thumb.appendChild(tCanvas);
+                    thumb.addEventListener('click', () => {
+                        const wrappers = pagesContainer.querySelectorAll('.live-page-wrapper');
+                        const target = Array.from(wrappers).find(w => parseInt(w.dataset.page,10) === p);
+                        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    });
+                    thumbsContainer.appendChild(thumb);
+                }).catch(() => {});
+            }).catch(() => {});
+        }
+    }).catch(() => {});
 }
 
 // Generate a thumbnail for a PDF data URL using PDF.js (returns Promise<string dataURL>)
@@ -390,10 +465,10 @@ function renderOrganizeMode() {
             AppState.currentChartIndex = index;
         });
 
-        // Double click opens in concert mode
+        // Double click opens in edit mode
         card.addEventListener('dblclick', () => {
             AppState.currentPageNumber = 1;
-            switchToMode('concert');
+            switchToMode('edit');
         });
 
         // Keyboard interactions
@@ -532,28 +607,57 @@ function prevChart() {
 function switchToMode(mode) {
     AppState.viewMode = mode;
     
-    const concertView = document.getElementById('concert-view');
+    const editView = document.getElementById('edit-view');
+    const liveView = document.getElementById('live-view');
     const organizeView = document.getElementById('organize-view');
-    const concertBtn = document.getElementById('concert-mode-btn');
+    const editBtn = document.getElementById('edit-mode-btn');
+    const liveBtn = document.getElementById('live-mode-btn');
     const organizeBtn = document.getElementById('organize-mode-btn');
-    
-    if (mode === 'concert') {
-        concertView.classList.add('active');
-        organizeView.classList.remove('active');
-        concertBtn.classList.add('active');
-        organizeBtn.classList.remove('active');
+
+    // Clear active states
+    [editView, liveView, organizeView].forEach(v => { if (v) v.classList.remove('active'); });
+    [editBtn, liveBtn, organizeBtn].forEach(b => { if (b) b.classList.remove('active'); });
+
+    if (mode === 'edit') {
+        if (editView) editView.classList.add('active');
+        if (editBtn) editBtn.classList.add('active');
         // Stop the organize mode ticker and restore the current chart title
         stopOrganizeTicker();
         renderCurrentChart();
-    } else {
-        concertView.classList.remove('active');
-        organizeView.classList.add('active');
-        concertBtn.classList.remove('active');
-        organizeBtn.classList.add('active');
+    } else if (mode === 'live') {
+        if (liveView) liveView.classList.add('active');
+        if (liveBtn) liveBtn.classList.add('active');
+        stopOrganizeTicker();
+        renderLiveMode();
+    } else if (mode === 'organize') {
+        if (organizeView) organizeView.classList.add('active');
+        if (organizeBtn) organizeBtn.classList.add('active');
         // Start date/time ticker in the header and render organize grid
         startOrganizeTicker();
         showOrganizeHeaderHelp();
         renderOrganizeMode();
+    }
+}
+
+// Role-based UI: show/hide director-only controls and enforce default mode for attendees
+function updateRoleUI() {
+    const directorOnlyIds = ['edit-mode-btn', 'organize-mode-btn', 'add-charts-btn', 'annotation-btn'];
+    directorOnlyIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = AppState.isDirector ? '' : 'none';
+    });
+
+    // Ensure live button and leave are always visible
+    const liveBtn = document.getElementById('live-mode-btn');
+    if (liveBtn) liveBtn.style.display = '';
+
+    // If the user is not a director, force Live mode and hide organize/edit
+    if (!AppState.isDirector) {
+        // If currently in edit/organize, switch to live
+        if (AppState.viewMode !== 'live') switchToMode('live');
+    } else {
+        // Director gets Edit/Organize available. Default to edit if not already.
+        if (AppState.viewMode !== 'edit') switchToMode('edit');
     }
 }
 
@@ -681,6 +785,28 @@ document.addEventListener('DOMContentLoaded', function() {
     const savedTheme = localStorage.getItem('theme') || 'light';
     applyTheme(savedTheme);
 
+    // Restore any saved currentSession (demo persistence). This helps preserve director/attendee state across reloads.
+    try {
+        const savedSessionRaw = localStorage.getItem('currentSession');
+        if (savedSessionRaw) {
+            const savedSession = JSON.parse(savedSessionRaw);
+            if (savedSession && savedSession.code) {
+                AppState.sessionCode = savedSession.code;
+                AppState.isDirector = !!savedSession.isDirector;
+                AppState.charts = savedSession.charts || [];
+                const uploadCodeEl = document.getElementById('session-code-display');
+                if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
+                const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
+                if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
+            }
+        }
+    } catch (e) {
+        console.error('Failed to restore currentSession from localStorage:', e);
+    }
+
+    // Update UI based on role (director vs attendee)
+    try { updateRoleUI(); } catch (e) { /* non-fatal */ }
+
     // Attach click listeners to any theme toggle buttons (present on multiple pages)
     document.querySelectorAll('.theme-toggle').forEach(btn => {
         btn.addEventListener('click', function() {
@@ -767,8 +893,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const nextChartBtn = document.getElementById('next-chart-btn');
     if (nextChartBtn) nextChartBtn.addEventListener('click', nextChart);
 
-    const concertBtn = document.getElementById('concert-mode-btn');
-    if (concertBtn) concertBtn.addEventListener('click', () => switchToMode('concert'));
+    const editBtn = document.getElementById('edit-mode-btn');
+    if (editBtn) editBtn.addEventListener('click', () => switchToMode('edit'));
+    const liveBtn = document.getElementById('live-mode-btn');
+    if (liveBtn) liveBtn.addEventListener('click', () => switchToMode('live'));
 
     const organizeBtn = document.getElementById('organize-mode-btn');
     if (organizeBtn) organizeBtn.addEventListener('click', () => switchToMode('organize'));
