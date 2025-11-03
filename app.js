@@ -94,19 +94,44 @@ function joinSession() {
 }
 
 function startSession() {
+    console.log('startSession() called', { sessionCode: AppState.sessionCode, chartsCount: AppState.charts.length });
+
     if (AppState.charts.length === 0) {
         alert('Please upload at least one PDF before starting the session');
         return;
     }
-    
-    // Save session data
-    localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({
-        code: AppState.sessionCode,
-        charts: AppState.charts
-    }));
-    
-    showPage('viewer');
-    renderCurrentChart();
+
+    // Ensure there's a session code (allow starting without explicitly clicking "Create Session")
+    if (!AppState.sessionCode) {
+        AppState.sessionCode = generateSessionCode();
+        AppState.isDirector = true;
+        const codeEl = document.getElementById('session-code-display');
+        if (codeEl) codeEl.textContent = AppState.sessionCode;
+        console.info('Generated session code for startSession:', AppState.sessionCode);
+    }
+
+    // Save session data (both named session and currentSession for demo flows)
+    try {
+        localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({
+            code: AppState.sessionCode,
+            charts: AppState.charts
+        }));
+        localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
+    } catch (err) {
+        console.error('Failed to save session data to localStorage:', err);
+    }
+
+    // Navigate to viewer and render the first chart, but guard rendering errors
+    try {
+        showPage('viewer');
+        // Ensure viewer shows concert mode by default
+        switchToMode('concert');
+        renderCurrentChart();
+        console.log('startSession completed: viewer shown');
+    } catch (err) {
+        console.error('Error while rendering viewer after startSession:', err);
+        alert('An error occurred while starting the session. Check the console for details.');
+    }
 }
 
 function leaveSession() {
