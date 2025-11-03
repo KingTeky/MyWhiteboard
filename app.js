@@ -34,6 +34,16 @@ const AppState = {
     lastY: 0
 };
 
+// Server base URL for API calls. Can be overridden by setting window.SERVER_BASE
+const SERVER_BASE = (function(){
+    if (typeof window !== 'undefined' && window.SERVER_BASE) return window.SERVER_BASE;
+    try {
+        const saved = localStorage.getItem('serverBase');
+        if (saved) return saved;
+    } catch(e) {}
+    return 'http://localhost:3000';
+})();
+
 // Session Management
 function generateSessionCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -50,7 +60,7 @@ function createSession() {
     // Try to create session server-side; fallback to client-only session if unavailable
     (async () => {
         try {
-            const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            const res = await fetch(`${SERVER_BASE}/api/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
             if (res.ok) {
                 const j = await res.json();
                 AppState.sessionCode = j.code;
@@ -105,7 +115,7 @@ function joinSession() {
     // Try to fetch session from server; fall back to localStorage
     (async () => {
         try {
-            const res = await fetch(`/api/sessions/${code}`);
+            const res = await fetch(`${SERVER_BASE}/api/sessions/${code}`);
             if (res.ok) {
                 const j = await res.json();
                 AppState.charts = j.charts || [];
@@ -158,7 +168,7 @@ function startSession() {
         const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
             try {
-                const res = await fetch(`/api/sessions/${AppState.sessionCode}/charts`, {
+                const res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
                     body: JSON.stringify({ charts: AppState.charts })
@@ -640,7 +650,7 @@ function saveSessionCharts() {
         const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
             try {
-                const res = await fetch(`/api/sessions/${AppState.sessionCode}/charts`, {
+                const res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
                     body: JSON.stringify({ charts: AppState.charts })
