@@ -20,6 +20,11 @@
     --hover: #f1f5f9;
     --success: #10b981;
     --danger: #ef4444;
+    /* file action button (upload/remove) colors */
+    --file-btn-bg: var(--background);
+    --file-btn-border: var(--border);
+    --file-btn-color: var(--text-primary);
+    --file-btn-hover-bg: var(--hover);
     /* order badge colors (theme-adaptive) */
     --order-badge-bg: var(--primary-color);
     --order-badge-color: #ffffff;
@@ -54,6 +59,11 @@ html[data-theme="dark"] {
     /* badge stands out on dark backgrounds: warm bright circle with dark text */
     --order-badge-bg: #ffd36b;
     --order-badge-color: #0b1220;
+    /* file action button adjustments for dark theme: lighter outline and readable text */
+    --file-btn-bg: var(--card-background);
+    --file-btn-border: rgba(255,255,255,0.12);
+    --file-btn-color: var(--text-primary);
+    --file-btn-hover-bg: rgba(255,255,255,0.02);
 }
 
 body {
@@ -346,15 +356,16 @@ input[type="text"]::placeholder {
 
 .file-actions button {
     padding: 0.5rem 1rem;
-    border: 1px solid var(--border);
-    background: var(--background);
+    border: 1px solid var(--file-btn-border);
+    background: var(--file-btn-bg);
+    color: var(--file-btn-color);
     border-radius: 6px;
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    transition: background-color 0.2s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .file-actions button:hover {
-    background: var(--hover);
+    background: var(--file-btn-hover-bg);
 }
 
 /* Viewer Page */
