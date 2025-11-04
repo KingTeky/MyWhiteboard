@@ -10,8 +10,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.resolve(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'sessions.json');
-const Database = require('better-sqlite3');
+let Database = null;
 let db = null;
+// try to load native better-sqlite3 optionally; if unavailable we fall back to file store
+try {
+  Database = require('better-sqlite3');
+} catch (e) {
+  Database = null;
+  console.warn('better-sqlite3 not available; using JSON file store fallback.');
+}
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
@@ -34,12 +41,16 @@ try {
 } catch (e) { console.warn('data dir check failed', e); }
 
 // Initialize SQLite DB for sessions (fallback to JSON file if sqlite fails)
-try {
-  const dbPath = path.join(DATA_DIR, 'sessions.db');
-  db = new Database(dbPath);
-  db.exec('CREATE TABLE IF NOT EXISTS sessions (code TEXT PRIMARY KEY, data TEXT)');
-} catch (e) {
-  console.warn('SQLite initialization failed, falling back to file store:', e);
+if (Database) {
+  try {
+    const dbPath = path.join(DATA_DIR, 'sessions.db');
+    db = new Database(dbPath);
+    db.exec('CREATE TABLE IF NOT EXISTS sessions (code TEXT PRIMARY KEY, data TEXT)');
+  } catch (e) {
+    console.warn('SQLite initialization failed, falling back to file store:', e);
+    db = null;
+  }
+} else {
   db = null;
 }
 
