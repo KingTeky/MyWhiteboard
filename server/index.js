@@ -10,6 +10,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.resolve(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'sessions.json');
+const Database = require('better-sqlite3');
+let db = null;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
@@ -30,6 +32,16 @@ try {
     }
   }
 } catch (e) { console.warn('data dir check failed', e); }
+
+// Initialize SQLite DB for sessions (fallback to JSON file if sqlite fails)
+try {
+  const dbPath = path.join(DATA_DIR, 'sessions.db');
+  db = new Database(dbPath);
+  db.exec('CREATE TABLE IF NOT EXISTS sessions (code TEXT PRIMARY KEY, data TEXT)');
+} catch (e) {
+  console.warn('SQLite initialization failed, falling back to file store:', e);
+  db = null;
+}
 
 // Map of sessionCode -> Set of WebSocket clients
 const sessionClients = new Map();
@@ -78,6 +90,8 @@ wss.on('connection', (ws, req) => {
 function deleteSession(code) {
   try {
     delete store[code];
+    // remove from sqlite as well
+    try { if (db) { db.prepare('DELETE FROM sessions WHERE code = ?').run(code); } } catch (e) {}
     persist();
   } catch (e) {
     console.error('Failed to delete session', code, e);
@@ -137,13 +151,26 @@ setInterval(() => {
 
 // Simple file-backed store
 let store = {};
+// Load sessions from SQLite DB if available, otherwise from JSON file
 try {
-  if (fs.existsSync(DATA_FILE)) {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    store = raw ? JSON.parse(raw) : {};
+  if (db) {
+    try {
+      const rows = db.prepare('SELECT code,data FROM sessions').all();
+      rows.forEach(r => {
+        try { store[r.code] = JSON.parse(r.data); } catch (e) { /* ignore parse errors */ }
+      });
+    } catch (e) {
+      console.error('Failed to load sessions from sqlite:', e);
+      store = {};
+    }
+  } else {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      store = raw ? JSON.parse(raw) : {};
+    }
   }
 } catch (e) {
-  console.error('Failed to read sessions.json:', e);
+  console.error('Failed to read sessions store:', e);
   store = {};
 }
 
@@ -165,9 +192,21 @@ try {
 
 function persist() {
   try {
+    if (db) {
+      const del = db.prepare('DELETE FROM sessions');
+      const ins = db.prepare('INSERT OR REPLACE INTO sessions(code,data) VALUES (?,?)');
+      const trx = db.transaction((s) => {
+        del.run();
+        for (const k of Object.keys(s)) {
+          try { ins.run(k, JSON.stringify(s[k])); } catch (e) {}
+        }
+      });
+      trx(store);
+      return;
+    }
     fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2), 'utf8');
   } catch (e) {
-    console.error('Failed to write sessions.json:', e);
+    console.error('Failed to persist sessions:', e);
   }
 }
 
