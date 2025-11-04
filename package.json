@@ -1,0 +1,14 @@
+{
+  "name": "mywhiteboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start:server": "node server/index.js",
+    "serve-client": "npx http-server -p 8080 .",
+    "dev": "concurrently \"npm:serve-client\" \"npm:start:server\"",
+    "start": "npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

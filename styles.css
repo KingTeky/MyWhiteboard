@@ -10,15 +10,70 @@
     --secondary-color: #64748b;
     --background: #ffffff;
     --surface: #f8fafc;
+    --card-background: #ffffff;
+    --pdf-background: #ffffff;
     --text-primary: #0f172a;
     --text-secondary: #475569;
     --border: #e2e8f0;
+    /* color used specifically for theme-toggle icons (can be bright in dark mode) */
+    --toggle-icon-color: var(--text-primary);
     --hover: #f1f5f9;
     --success: #10b981;
     --danger: #ef4444;
+    /* file action button (upload/remove) colors */
+    --file-btn-bg: var(--background);
+    --file-btn-border: var(--border);
+    --file-btn-color: var(--text-primary);
+    --file-btn-hover-bg: var(--hover);
+    /* neutral control/button colors for inline controls (icons, small buttons) */
+    --control-bg: var(--background);
+    --control-border: var(--border);
+    --control-color: var(--text-primary);
+    --control-hover-bg: var(--hover);
+    /* order badge colors (theme-adaptive) */
+    --order-badge-bg: var(--primary-color);
+    --order-badge-color: #ffffff;
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+}
+
+/* Smooth theme transitions */
+html[data-theme] {
+    transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Dark theme overrides (per-client only) */
+html[data-theme="dark"] {
+    --primary-color: #60a5fa; /* lighter blue */
+    --secondary-color: #94a3b8;
+    --background: #0b1220; /* page background */
+    --surface: #0f1724; /* elevated surfaces */
+    --card-background: #0b1220;
+    --pdf-background: #0b1220;
+    --text-primary: #e6eef8;
+    --text-secondary: #94a3b8;
+    --border: rgba(255,255,255,0.06);
+    /* make the theme toggle icon bright in dark mode so it stands out
+       (users can see the 'sun' / light icon clearly and know how to switch back) */
+    --toggle-icon-color: #ffd36b;
+    --hover: rgba(255,255,255,0.02);
+    --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.6);
+    --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.6);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.6);
+    /* badge stands out on dark backgrounds: warm bright circle with dark text */
+    --order-badge-bg: #ffd36b;
+    --order-badge-color: #0b1220;
+    /* file action button adjustments for dark theme: lighter outline and readable text */
+    --file-btn-bg: var(--card-background);
+    --file-btn-border: rgba(255,255,255,0.12);
+    --file-btn-color: var(--text-primary);
+    --file-btn-hover-bg: rgba(255,255,255,0.02);
+    /* neutral control/button adjustments for dark theme: muted light outlines and readable text */
+    --control-bg: var(--card-background);
+    --control-border: rgba(255,255,255,0.08);
+    --control-color: var(--text-primary);
+    --control-hover-bg: rgba(255,255,255,0.03);
 }
 
 body {
@@ -64,6 +119,26 @@ body {
     color: var(--text-secondary);
 }
 
+/* Brand heading: align clef icon with title */
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    /* keep the brand inline with surrounding content */
+    vertical-align: middle;
+}
+
+.brand-icon {
+    /* make the clef slightly larger than the h1 text so the dots line up visually */
+    height: 1.25em; /* relative to the h1 font-size */
+    width: auto;
+    display: block;
+    object-fit: contain;
+    flex: 0 0 auto;
+    /* nudge the icon upward a little so the clef dots align with the title text baseline */
+    transform: translateY(-0.12em);
+}
+
 .action-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -106,6 +181,9 @@ body {
     cursor: pointer;
     transition: background-color 0.2s ease, transform 0.1s ease;
     outline: none;
+
+    /* default control color for non-primary buttons */
+    color: var(--control-color);
 }
 
 .btn:active {
@@ -132,15 +210,15 @@ body {
 
 .btn-icon {
     padding: 0.5rem;
-    background: var(--background);
-    border: 1px solid var(--border);
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
     display: inline-flex;
     align-items: center;
     justify-content: center;
 }
 
 .btn-icon:hover {
-    background: var(--hover);
+    background: var(--control-hover-bg);
 }
 
 .btn-icon.active {
@@ -151,6 +229,20 @@ body {
 
 .btn-icon svg {
     color: inherit;
+}
+
+/* Theme-toggle specific icon styling: use a dedicated color variable so the
+   'light' (sun) icon can be bright when in dark mode while keeping other
+   icons unchanged. SVGs use stroke="currentColor" already in markup. */
+.theme-toggle {
+    color: var(--toggle-icon-color);
+}
+
+.theme-toggle svg {
+    color: inherit;
+    /* ensure strokes pick up the current color */
+    stroke: currentColor;
+    fill: none;
 }
 
 /* Input Group */
@@ -207,6 +299,12 @@ input[type="text"]::placeholder {
     border-radius: 12px;
     padding: 4rem 2rem;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 720px;
+    margin: 0 auto;
     transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
@@ -277,32 +375,40 @@ input[type="text"]::placeholder {
 
 .file-actions button {
     padding: 0.5rem 1rem;
-    border: 1px solid var(--border);
-    background: var(--background);
+    border: 1px solid var(--file-btn-border);
+    background: var(--file-btn-bg);
+    color: var(--file-btn-color);
     border-radius: 6px;
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    transition: background-color 0.2s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .file-actions button:hover {
-    background: var(--hover);
+    background: var(--file-btn-hover-bg);
 }
 
 /* Viewer Page */
 .viewer-container {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100vh; /* full viewport so inner areas can scroll independently */
     background: var(--background);
 }
 
 .viewer-header {
+    flex: 0 0 auto;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 1rem 2rem;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    /* make header visually distinct & slightly darker than scrollable area */
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
-    background: var(--background);
+    /* keep the header visible at top while scrolling inside views */
+    position: sticky;
+    top: 0;
+    z-index: 30;
 }
 
 .viewer-title h2 {
@@ -319,6 +425,53 @@ input[type="text"]::placeholder {
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    /* ensure buttons stay right-aligned within the header */
+    margin-left: auto;
+}
+
+/* Separate the leave button from the other mode controls to reduce accidental clicks */
+.viewer-controls #leave-session-btn {
+    margin-left: 12px; /* gap between mode buttons and leave */
+    padding-left: 12px; /* visual breathing room */
+    border-left: 1px solid var(--border);
+}
+
+/* Ensure the theme toggle sits at the top-right of pages where it's present
+   (landing header, upload page-header, and viewer header). We make the
+   header containers positioned so the absolute toggle positions correctly. */
+header, .page-header, .viewer-header {
+    position: relative;
+}
+
+header .theme-toggle,
+.page-header .theme-toggle {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 20;
+}
+
+/* Small session code display under the viewer controls */
+.viewer-session-code {
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-top: 6px;
+    margin-right: 0.5rem; /* align with control group */
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.viewer-session-code .code-text {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+#copy-session-code-btn {
+    padding: 0.25rem;
+    width: 30px;
+    height: 26px;
 }
 
 /* Views */
@@ -332,13 +485,220 @@ input[type="text"]::placeholder {
     display: flex;
 }
 
-/* Concert Mode */
-#concert-view {
+/* Edit Mode (previously Concert Mode) */
+#edit-view {
     flex-direction: column;
     align-items: center;
     justify-content: center;
     background: var(--surface);
     padding: 2rem;
+}
+
+/* Live Mode: continuous vertical pages with thumbnails */
+#live-view {
+    padding: 1rem 2rem;
+}
+
+.live-container {
+    display: flex;
+    gap: 16px;
+    height: 100%;
+    align-items: stretch;
+}
+
+/* Splitter between pages and thumbnails for adjustable sizing */
+.live-splitter {
+    width: 10px;
+    cursor: col-resize;
+    background: transparent;
+    flex: 0 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.live-splitter:before {
+    content: '';
+    width: 2px;
+    height: 36px;
+    background: rgba(0,0,0,0.06);
+    border-radius: 2px;
+    transition: background-color 150ms ease, height 150ms ease;
+}
+.live-splitter:hover:before { background: rgba(0,0,0,0.12); height: 44px; }
+
+/* When vertical stacking on small screens, splitter becomes horizontal */
+@media (max-width: 720px) {
+    .live-container { flex-direction: column; }
+    .live-splitter { width: 100%; height: 10px; cursor: row-resize; flex: 0 0 10px; }
+    .live-splitter:before { width: 36px; height: 2px; }
+}
+
+/* Main scrollable chart area */
+.live-pages {
+    flex: 1 1 auto;
+    overflow: auto;
+    min-height: 0; /* important for flex children to allow internal scrolling */
+    -webkit-overflow-scrolling: touch;
+    padding: 12px;
+}
+
+/* Navigation thumbnails: fixed-width column with its own scrollbar */
+.live-thumbs {
+    flex: 0 0 180px; /* adjust width as desired */
+    max-width: 220px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    border-left: 1px solid rgba(0,0,0,0.06);
+    padding: 12px;
+    background: var(--thumb-bg, #fafafa);
+    /* ensure absolute-positioned badges inside can position correctly */
+    position: relative;
+}
+
+/* Allow thumbs column to be resized by JS changing inline flex-basis/width */
+.live-thumbs[aria-resizable="true"] { transition: none; }
+
+/* Optional: make thumbnails layout vertical and not wrap */
+.live-thumbs .thumb {
+    display: block;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+/* The code uses .live-thumb for generated thumbnails - ensure styling matches */
+.live-thumbs .live-thumb {
+    display: block;
+    margin-bottom: 8px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    background: transparent;
+}
+
+/* individual thumbnail visuals */
+.live-thumb canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+    box-shadow: var(--shadow-sm);
+}
+
+.live-thumb.active {
+    outline: 3px solid rgba(37,99,235,0.16);
+    background: rgba(37,99,235,0.03);
+}
+
+/* page wrapper for live pages */
+.live-page-wrapper {
+    margin-bottom: 16px;
+}
+
+/* Reorder animation: subtle slide + highlight when MD changes ordering */
+.reorder-anim {
+    animation: mw-reorder 700ms ease-in-out;
+}
+@keyframes mw-reorder {
+    0% { transform: translateY(-6px); box-shadow: 0 10px 30px rgba(0,0,0,0.06); }
+    50% { transform: translateY(4px); }
+    100% { transform: translateY(0); box-shadow: none; }
+}
+
+/* Thumbnail numeric badge (order indicator) */
+.live-thumb {
+    position: relative;
+    display: block;
+    margin-bottom: 8px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    background: transparent;
+}
+.live-thumb .thumb-number {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--order-badge-bg);
+    color: var(--order-badge-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+}
+
+/* Live-update badge placed at top of thumbnails column */
+.live-update-badge {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: var(--primary-color);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 220ms ease, transform 220ms ease;
+    z-index: 40;
+}
+.live-update-badge.visible { opacity: 1; transform: translateY(0); }
+
+/* Respect user's motion preferences: reduce/disable non-essential animation */
+@media (prefers-reduced-motion: reduce) {
+    .reorder-anim { animation: none !important; }
+    .live-update-badge, .mw-toast { transition: none !important; }
+}
+
+.live-chart-header {
+    font-weight: 700;
+    margin: 12px 0 6px 0;
+    color: var(--text-primary);
+}
+
+.live-chart-block {
+    margin-bottom: 20px;
+}
+
+/* Toast notification */
+.mw-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 24px;
+    background: rgba(15,23,42,0.95);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(2,6,23,0.4);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 220ms ease, transform 220ms ease;
+    z-index: 12000;
+}
+.mw-toast.visible { opacity: 1; transform: translateY(0); }
+
+/* make the pages and thumbs independently scrollable in the live container */
+.live-container { align-items: stretch; }
+.live-pages { overflow: auto; }
+.live-thumbs { overflow: auto; }
+
+/* Upload area container: center the drop-zone within the page */
+.upload-area {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+}
+
+/* Ensure browse button (used on upload page) is centered in the drop zone */
+#browse-files-btn {
+    display: inline-block;
+    margin-top: 0.75rem;
 }
 
 .pdf-viewer-container {
@@ -354,7 +714,7 @@ input[type="text"]::placeholder {
     position: relative;
     width: 100%;
     height: 100%;
-    background: white;
+    background: var(--pdf-background);
     box-shadow: var(--shadow-lg);
     border-radius: 8px;
     overflow: hidden;
@@ -394,9 +754,133 @@ input[type="text"]::placeholder {
 
 .charts-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1.5rem;
 }
+
+.organize-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1rem 0;
+}
+
+.organize-help {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+/* Organize mode: make chart cards look like rounded selectable squares */
+.chart-card {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 200px;
+    cursor: grab;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.chart-card:active { cursor: grabbing; }
+
+.chart-card.selected {
+    border-color: var(--primary-color);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    transform: translateY(-4px);
+}
+
+.chart-card.drag-over {
+    border-color: var(--primary-color);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.14);
+    transform: translateY(-6px) scale(1.02);
+}
+
+.chart-thumbnail { width: 80%; height: 60%; display:flex; align-items:center; justify-content:center; }
+
+.chart-info { padding: 0.5rem; text-align: center; }
+
+.chart-info h3 { font-size: 0.95rem; margin: 0; color: var(--text-primary); }
+
+.chart-info p { font-size: 0.85rem; color: var(--text-secondary); margin: 0; }
+
+/* Move controls for accessibility */
+.chart-move-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* Order badge shown on organize thumbnails to indicate playback order */
+.chart-order-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--order-badge-bg);
+    color: var(--order-badge-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+    font-size: 0.9rem;
+}
+
+/* Remove badge: shown on selected thumbnail to allow deletion */
+.chart-remove-badge {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--danger);
+    color: #fff;
+    display: none; /* only show when selected */
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+    font-size: 1rem;
+    cursor: pointer;
+    z-index: 6; /* sit above thumbnail content */
+}
+
+.chart-card.selected .chart-remove-badge {
+    display: inline-flex;
+}
+
+.chart-remove-badge:focus {
+    outline: 2px solid rgba(255,255,255,0.3);
+}
+
+.move-btn {
+    background: var(--background);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 34px;
+    height: 28px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.move-btn:focus { outline: 2px solid var(--primary-color); }
+
+.chart-card { position: relative; }
 
 .chart-card {
     background: var(--background);

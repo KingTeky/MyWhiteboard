@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MyWhiteboard - Music Chart Manager</title>
+    <title>My Music Whiteboard - Music Chart Manager</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,8 +12,16 @@
         <div id="landing-page" class="page active">
             <div class="container">
                 <header>
-                    <h1>MyWhiteboard</h1>
+                    <h1 class="brand"><img src="bassclef.svg" class="brand-icon" alt="Bass clef" width="36" height="36">MusicWhiteboard</h1>
                     <p class="tagline">Modern Music Chart Management for Musicians</p>
+                    <div class="header-controls">
+                        <button class="btn btn-icon theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+                            <!-- Icon will be set by JS -->
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="5"></circle>
+                            </svg>
+                        </button>
+                    </div>
                 </header>
                 
                 <div class="action-cards">
@@ -44,6 +52,13 @@
                         <span>Session Code: <strong id="session-code-display"></strong></span>
                         <button id="start-session-btn" class="btn btn-primary">Start Session</button>
                     </div>
+                    <div class="header-controls">
+                        <button class="btn btn-icon theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="5"></circle>
+                            </svg>
+                        </button>
+                    </div>
                 </header>
                 
                 <div class="upload-area">
@@ -73,6 +88,13 @@
                         <span id="page-indicator">Page 1 of 1</span>
                     </div>
                     <div class="viewer-controls">
+                        <!-- Add charts button placed left of organize button; icon-only to match other controls -->
+                        <button id="add-charts-btn" class="btn btn-icon" title="Add Charts" aria-label="Add Charts">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                        </button>
                         <button id="organize-mode-btn" class="btn btn-icon" title="Organize Mode">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="3" width="7" height="7"></rect>
@@ -81,8 +103,15 @@
                                 <rect x="14" y="14" width="7" height="7"></rect>
                             </svg>
                         </button>
-                        <button id="concert-mode-btn" class="btn btn-icon active" title="Concert Mode">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <!-- Live mode: attendee-facing view -->
+                        <button id="live-mode-btn" class="btn btn-icon" title="Live Mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 3v18l15-9z"></path>
+                            </svg>
+                        </button>
+                        <!-- Edit mode: Music Director can annotate/print/save -->
+                        <button id="edit-mode-btn" class="btn btn-icon active" title="Edit Mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="3" width="18" height="18" rx="2"></rect>
                             </svg>
                         </button>
@@ -93,11 +122,28 @@
                             </svg>
                         </button>
                         <button id="leave-session-btn" class="btn btn-secondary">Leave</button>
+                        <!-- session code and copy button placed to the left of the theme toggle -->
+                        <div class="viewer-session-code" id="viewer-session-code" aria-live="polite">
+                            <span id="viewer-session-code-text" class="code-text"></span>
+                            <button id="copy-session-code-btn" class="btn btn-icon" title="Copy session code" aria-label="Copy session code">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <!-- theme toggle is the rightmost control -->
+                        <button class="btn btn-icon theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="5"></circle>
+                            </svg>
+                        </button>
                     </div>
+                    
                 </div>
 
-                <!-- Concert Mode View -->
-                <div id="concert-view" class="view active">
+                <!-- Edit Mode View (previously Concert Mode) -->
+                <div id="edit-view" class="view active">
                     <div class="pdf-viewer-container">
                         <div class="pdf-display">
                             <iframe id="pdf-viewer"></iframe>
@@ -120,14 +166,26 @@
                     </div>
                 </div>
 
+                <!-- Live Mode View: attendee-facing continuous scroll with thumbnails -->
+                <div id="live-view" class="view">
+                    <div class="live-container">
+                        <div id="live-pages" class="live-pages"></div>
+                        <div id="live-thumbs" class="live-thumbs"></div>
+                    </div>
+                </div>
+
                 <!-- Organize Mode View -->
                 <div id="organize-view" class="view">
+                    <div class="organize-controls"></div>
                     <div id="charts-grid" class="charts-grid"></div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- PDF.js for thumbnail generation and SortableJS for touch-friendly drag/reorder -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

@@ -29,3 +29,7 @@ temp/
 # Logs
 logs/
 *.log
+
+# Server runtime data
+/server/data/
+/server/sessions.json
