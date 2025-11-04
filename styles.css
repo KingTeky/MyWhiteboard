@@ -299,6 +299,12 @@ input[type="text"]::placeholder {
     border-radius: 12px;
     padding: 4rem 2rem;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 720px;
+    margin: 0 auto;
     transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
@@ -385,17 +391,24 @@ input[type="text"]::placeholder {
 .viewer-container {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100vh; /* full viewport so inner areas can scroll independently */
     background: var(--background);
 }
 
 .viewer-header {
+    flex: 0 0 auto;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 1rem 2rem;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    /* make header visually distinct & slightly darker than scrollable area */
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
-    background: var(--background);
+    /* keep the header visible at top while scrolling inside views */
+    position: sticky;
+    top: 0;
+    z-index: 30;
 }
 
 .viewer-title h2 {
@@ -412,6 +425,8 @@ input[type="text"]::placeholder {
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    /* ensure buttons stay right-aligned within the header */
+    margin-left: auto;
 }
 
 /* Separate the leave button from the other mode controls to reduce accidental clicks */
@@ -486,35 +501,204 @@ header .theme-toggle,
 
 .live-container {
     display: flex;
-    gap: 1rem;
-    align-items: flex-start;
+    gap: 16px;
+    height: 100%;
+    align-items: stretch;
 }
 
+/* Splitter between pages and thumbnails for adjustable sizing */
+.live-splitter {
+    width: 10px;
+    cursor: col-resize;
+    background: transparent;
+    flex: 0 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.live-splitter:before {
+    content: '';
+    width: 2px;
+    height: 36px;
+    background: rgba(0,0,0,0.06);
+    border-radius: 2px;
+    transition: background-color 150ms ease, height 150ms ease;
+}
+.live-splitter:hover:before { background: rgba(0,0,0,0.12); height: 44px; }
+
+/* When vertical stacking on small screens, splitter becomes horizontal */
+@media (max-width: 720px) {
+    .live-container { flex-direction: column; }
+    .live-splitter { width: 100%; height: 10px; cursor: row-resize; flex: 0 0 10px; }
+    .live-splitter:before { width: 36px; height: 2px; }
+}
+
+/* Main scrollable chart area */
 .live-pages {
     flex: 1 1 auto;
-    max-width: 900px;
     overflow: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
+    min-height: 0; /* important for flex children to allow internal scrolling */
+    -webkit-overflow-scrolling: touch;
+    padding: 12px;
 }
 
+/* Navigation thumbnails: fixed-width column with its own scrollbar */
 .live-thumbs {
-    width: 140px;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    align-items: center;
+    flex: 0 0 180px; /* adjust width as desired */
+    max-width: 220px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    border-left: 1px solid rgba(0,0,0,0.06);
+    padding: 12px;
+    background: var(--thumb-bg, #fafafa);
+    /* ensure absolute-positioned badges inside can position correctly */
+    position: relative;
 }
 
-.live-thumb {
-    width: 100px;
-    height: 140px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
+/* Allow thumbs column to be resized by JS changing inline flex-basis/width */
+.live-thumbs[aria-resizable="true"] { transition: none; }
+
+/* Optional: make thumbnails layout vertical and not wrap */
+.live-thumbs .thumb {
+    display: block;
+    margin-bottom: 8px;
     cursor: pointer;
+}
+
+/* The code uses .live-thumb for generated thumbnails - ensure styling matches */
+.live-thumbs .live-thumb {
+    display: block;
+    margin-bottom: 8px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    background: transparent;
+}
+
+/* individual thumbnail visuals */
+.live-thumb canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+    box-shadow: var(--shadow-sm);
+}
+
+.live-thumb.active {
+    outline: 3px solid rgba(37,99,235,0.16);
+    background: rgba(37,99,235,0.03);
+}
+
+/* page wrapper for live pages */
+.live-page-wrapper {
+    margin-bottom: 16px;
+}
+
+/* Reorder animation: subtle slide + highlight when MD changes ordering */
+.reorder-anim {
+    animation: mw-reorder 700ms ease-in-out;
+}
+@keyframes mw-reorder {
+    0% { transform: translateY(-6px); box-shadow: 0 10px 30px rgba(0,0,0,0.06); }
+    50% { transform: translateY(4px); }
+    100% { transform: translateY(0); box-shadow: none; }
+}
+
+/* Thumbnail numeric badge (order indicator) */
+.live-thumb {
+    position: relative;
+    display: block;
+    margin-bottom: 8px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    background: transparent;
+}
+.live-thumb .thumb-number {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--order-badge-bg);
+    color: var(--order-badge-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+}
+
+/* Live-update badge placed at top of thumbnails column */
+.live-update-badge {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: var(--primary-color);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 220ms ease, transform 220ms ease;
+    z-index: 40;
+}
+.live-update-badge.visible { opacity: 1; transform: translateY(0); }
+
+/* Respect user's motion preferences: reduce/disable non-essential animation */
+@media (prefers-reduced-motion: reduce) {
+    .reorder-anim { animation: none !important; }
+    .live-update-badge, .mw-toast { transition: none !important; }
+}
+
+.live-chart-header {
+    font-weight: 700;
+    margin: 12px 0 6px 0;
+    color: var(--text-primary);
+}
+
+.live-chart-block {
+    margin-bottom: 20px;
+}
+
+/* Toast notification */
+.mw-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 24px;
+    background: rgba(15,23,42,0.95);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(2,6,23,0.4);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 220ms ease, transform 220ms ease;
+    z-index: 12000;
+}
+.mw-toast.visible { opacity: 1; transform: translateY(0); }
+
+/* make the pages and thumbs independently scrollable in the live container */
+.live-container { align-items: stretch; }
+.live-pages { overflow: auto; }
+.live-thumbs { overflow: auto; }
+
+/* Upload area container: center the drop-zone within the page */
+.upload-area {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+}
+
+/* Ensure browse button (used on upload page) is centered in the drop zone */
+#browse-files-btn {
+    display: inline-block;
+    margin-top: 0.75rem;
 }
 
 .pdf-viewer-container {
