@@ -34,6 +34,12 @@ const AppState = {
     lastY: 0
 };
 
+// Live mode polling config
+const LIVE_POLL_INTERVAL_MS = 3000; // 3s poll interval for chart updates
+let _livePollTimer = null;
+let _ws = null;
+let _highlightObserver = null;
+
 // Server base URL for API calls. Can be overridden by setting window.SERVER_BASE
 const SERVER_BASE = (function(){
     if (typeof window !== 'undefined' && window.SERVER_BASE) return window.SERVER_BASE;
@@ -82,13 +88,15 @@ function createSession() {
             localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: [] }));
         }
 
-        showPage('upload');
+    showPage('upload');
         const uploadCodeEl = document.getElementById('session-code-display');
         if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
         const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
         if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
         // Update UI to reflect director privileges
         updateRoleUI();
+        // If a live websocket exists, subscribe to this session so viewers receive updates
+        try { if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode })); } catch (e) {}
     })();
 }
 
@@ -138,6 +146,8 @@ function joinSession() {
             // Attendees should see Live mode by default
             switchToMode('live');
             renderCurrentChart();
+            // ensure websocket subscription for live updates
+            try { if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode })); } catch (e) {}
         } else {
             alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
         }
@@ -204,6 +214,8 @@ function startSession() {
 function leaveSession() {
     if (confirm('Are you sure you want to leave this session?')) {
         // Reset state
+        // stop live socket if active
+        stopLiveSocket();
         AppState.charts = [];
         AppState.currentChartIndex = 0;
         AppState.currentPageNumber = 1;
@@ -351,91 +363,436 @@ function renderCurrentChart() {
 
 // Render Live mode: continuous vertical pages with annotations and thumbnails
 function renderLiveMode() {
-    if (AppState.charts.length === 0) return;
-    const chart = AppState.charts[AppState.currentChartIndex];
+    // Render all charts in order as a continuous scroll; thumbnails represent each page across charts.
     const pagesContainer = document.getElementById('live-pages');
     const thumbsContainer = document.getElementById('live-thumbs');
-    if (!pagesContainer || !thumbsContainer || !chart || !chart.data) return;
+    if (!pagesContainer || !thumbsContainer) return;
     pagesContainer.innerHTML = '';
     thumbsContainer.innerHTML = '';
 
     if (!window['pdfjsLib']) return;
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-    pdfjsLib.getDocument(chart.data).promise.then(pdf => {
-        const state = { rendered: {} };
 
-        // Create wrappers for each page; actual rendering happens lazily when visible
-        for (let p = 1; p <= pdf.numPages; p++) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'live-page-wrapper';
-            wrapper.dataset.page = p;
-            wrapper.dataset.rendered = '0';
-            wrapper.style.minHeight = '200px';
-            pagesContainer.appendChild(wrapper);
+    // Create placeholders for all charts to keep ordering stable
+    AppState.charts.forEach((chart, chartIdx) => {
+        const chartHeader = document.createElement('div');
+        chartHeader.className = 'live-chart-header';
+        chartHeader.textContent = `${chartIdx + 1}. ${chart.name}`;
+        pagesContainer.appendChild(chartHeader);
+
+        const chartBlock = document.createElement('div');
+        chartBlock.className = 'live-chart-block';
+        chartBlock.dataset.chartIndex = chartIdx;
+        pagesContainer.appendChild(chartBlock);
+
+        // create a thumbnail placeholder for this chart (one-per-chart, first-page)
+        const thumbPlaceholder = document.createElement('div');
+        thumbPlaceholder.className = 'live-thumb';
+        thumbPlaceholder.dataset.chartId = chart.id;
+        thumbPlaceholder.dataset.chartIndex = chartIdx;
+        // add numeric badge for chart order
+        const num = document.createElement('div');
+        num.className = 'thumb-number';
+        num.textContent = String(chartIdx + 1);
+        thumbPlaceholder.appendChild(num);
+        // clicking the thumb should scroll to the chart block
+        thumbPlaceholder.addEventListener('click', () => {
+            const target = pagesContainer.querySelector(`.live-page-wrapper[data-chart-index="${chartIdx}"]`);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        thumbsContainer.appendChild(thumbPlaceholder);
+
+        // generate or reuse a cached thumbnail for this chart (use helper)
+        if (chart.thumb) {
+            try { const img = new Image(); img.src = chart.thumb; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
+        } else if (chart.data) {
+            generateThumbnail(chart, 140).then(dataUrl => {
+                if (dataUrl) {
+                    chart.thumb = dataUrl; // cache on chart
+                    try { const img = new Image(); img.src = dataUrl; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
+                }
+            });
+        }
+    });
+
+    // For each chart, lazy-render pages and generate thumbnails for each page
+    AppState.charts.forEach((chart, chartIdx) => {
+        const chartBlock = pagesContainer.querySelector(`.live-chart-block[data-chart-index="${chartIdx}"]`);
+        if (!chart || !chart.data || !chartBlock) return;
+        chartBlock.innerHTML = '<div class="chart-loading">Loading...</div>';
+
+        pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+            chartBlock.innerHTML = '';
+            for (let p = 1; p <= pdf.numPages; p++) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'live-page-wrapper';
+                // include stable chart id so we can map across reorderings
+                wrapper.dataset.chartId = chart.id;
+                wrapper.dataset.chartIndex = chartIdx;
+                wrapper.dataset.page = p;
+                wrapper.dataset.rendered = '0';
+                wrapper.style.minHeight = '200px';
+                chartBlock.appendChild(wrapper);
+            }
+
+            const observer = new IntersectionObserver((entries, obs) => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const w = entry.target;
+                    const p = parseInt(w.dataset.page, 10);
+                    const cIdx = parseInt(w.dataset.chartIndex, 10);
+                    if (w.dataset.rendered === '1') { obs.unobserve(w); return; }
+
+                    pdf.getPage(p).then(page => {
+                        const viewport = page.getViewport({ scale: 1 });
+                        const scale = Math.min(900 / viewport.width, 1);
+                        const scaled = page.getViewport({ scale });
+                        const canvas = document.createElement('canvas');
+                        canvas.width = scaled.width;
+                        canvas.height = scaled.height;
+                        const ctx = canvas.getContext('2d');
+                        page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
+                            const key = `${AppState.sessionCode}_${cIdx}_${p}`;
+                            const ann = AppState.annotations[key];
+                            if (ann) {
+                                const img = new Image();
+                                img.onload = () => {
+                                    try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (e) {}
+                                };
+                                img.src = ann;
+                            }
+                            w.appendChild(canvas);
+
+                            // thumbnails are generated separately (one-per-chart) via generateThumbnail helper
+
+                            w.dataset.rendered = '1';
+                            obs.unobserve(w);
+                        }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
+                    }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
+                });
+            }, { root: pagesContainer, rootMargin: '400px 0px', threshold: 0.01 });
+
+            const wrappers = chartBlock.querySelectorAll('.live-page-wrapper');
+            wrappers.forEach(w => observer.observe(w));
+        }).catch(() => {
+            chartBlock.innerHTML = '<div class="chart-error">Failed to load chart</div>';
+        });
+    });
+    // initialize highlighting after rendering placeholders (small delay to allow DOM updates)
+    setTimeout(() => { initLiveHighlighting(); }, 300);
+    // initialize splitter/resizer between pages and thumbs (responsive & draggable)
+    setTimeout(() => { initLiveResizer(); }, 320);
+}
+
+// Live layout resizer: draggable splitter between .live-pages and .live-thumbs
+function initLiveResizer() {
+    try {
+        const container = document.querySelector('.live-container');
+        const pages = document.querySelector('.live-pages');
+        const thumbs = document.querySelector('.live-thumbs');
+        if (!container || !pages || !thumbs) return;
+
+        // create splitter if missing
+        let splitter = container.querySelector('.live-splitter');
+        if (!splitter) {
+            splitter = document.createElement('div');
+            splitter.className = 'live-splitter';
+            splitter.tabIndex = 0;
+            splitter.setAttribute('role', 'separator');
+            splitter.setAttribute('aria-orientation', 'vertical');
+            splitter.setAttribute('aria-label', 'Resize thumbnails');
+            // insert splitter before thumbs
+            container.insertBefore(splitter, thumbs);
         }
 
-        // IntersectionObserver to lazy-render pages when approaching viewport
-        const observer = new IntersectionObserver((entries, obs) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) return;
-                const w = entry.target;
-                const p = parseInt(w.dataset.page, 10);
-                if (w.dataset.rendered === '1') { obs.unobserve(w); return; }
+        // apply saved width if present
+        const saved = parseInt(localStorage.getItem('liveThumbWidth') || '0', 10);
+        if (saved && saved > 80) {
+            thumbs.style.flex = `0 0 ${saved}px`;
+            thumbs.style.maxWidth = `${Math.max(saved, 220)}px`;
+            thumbs.setAttribute('aria-resizable', 'true');
+        } else {
+            thumbs.style.flex = thumbs.style.flex || '0 0 180px';
+        }
 
-                // render the page
-                pdf.getPage(p).then(page => {
-                    const viewport = page.getViewport({ scale: 1 });
-                    const scale = Math.min(900 / viewport.width, 1);
-                    const scaled = page.getViewport({ scale });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = scaled.width;
-                    canvas.height = scaled.height;
-                    const ctx = canvas.getContext('2d');
-                    page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
-                        // apply saved annotation for this page if any
-                        const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${p}`;
-                        const ann = AppState.annotations[key];
-                        if (ann) {
-                            const img = new Image();
-                            img.onload = () => {
-                                try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch (e) {}
-                            };
-                            img.src = ann;
-                        }
-                        // append canvas to wrapper
-                        w.appendChild(canvas);
+        let dragging = false;
+        let startX = 0; let startY = 0; let startWidth = 0;
 
-                        // generate and append thumbnail (small canvas)
-                        try {
-                            const tScale = Math.min(120 / viewport.width, 0.18);
-                            const tCanvas = document.createElement('canvas');
-                            tCanvas.width = Math.round(viewport.width * tScale);
-                            tCanvas.height = Math.round(viewport.height * tScale);
-                            const tCtx = tCanvas.getContext('2d');
-                            page.render({ canvasContext: tCtx, viewport: page.getViewport({ scale: tScale }) }).promise.then(() => {
-                                const thumb = document.createElement('div');
-                                thumb.className = 'live-thumb';
-                                thumb.appendChild(tCanvas);
-                                thumb.addEventListener('click', () => {
-                                    if (w) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                });
-                                thumbsContainer.appendChild(thumb);
-                            }).catch(() => {});
-                        } catch (e) {
-                            // ignore thumbnail generation errors
-                        }
+        function onPointerDown(e) {
+            e.preventDefault();
+            dragging = true;
+            startX = (e.clientX || (e.touches && e.touches[0].clientX)) || 0;
+            startY = (e.clientY || (e.touches && e.touches[0].clientY)) || 0;
+            startWidth = thumbs.getBoundingClientRect().width;
+            document.body.style.userSelect = 'none';
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('touchmove', onPointerMove, { passive: false });
+            window.addEventListener('touchend', onPointerUp);
+        }
 
-                        w.dataset.rendered = '1';
-                        obs.unobserve(w);
-                    }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
-                }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
-            });
-        }, { root: pagesContainer, rootMargin: '400px 0px', threshold: 0.01 });
+        function onPointerMove(e) {
+            if (!dragging) return;
+            e.preventDefault();
+            const clientX = (e.clientX || (e.touches && e.touches[0].clientX)) || 0;
+            const clientY = (e.clientY || (e.touches && e.touches[0].clientY)) || 0;
+            const containerRect = container.getBoundingClientRect();
+            if (containerRect.width === 0) return;
 
-        // Observe all wrappers
-        const wrappers = pagesContainer.querySelectorAll('.live-page-wrapper');
-        wrappers.forEach(w => observer.observe(w));
-    }).catch(() => {});
+            // If container is vertical (mobile), resize height instead of width
+            if (window.getComputedStyle(container).flexDirection === 'column') {
+                const delta = clientY - startY;
+                const pagesHeight = pages.getBoundingClientRect().height - delta;
+                // clamp
+                const min = 120; const max = containerRect.height - 80;
+                const newPagesH = Math.max(min, Math.min(max, pagesHeight));
+                pages.style.flex = `0 0 ${newPagesH}px`;
+                // persist
+                localStorage.setItem('liveThumbHeight', String(newPagesH));
+            } else {
+                const delta = startX - clientX; // dragging left increases thumb width
+                let newWidth = startWidth + delta;
+                // clamp between 100 and 480
+                newWidth = Math.max(100, Math.min(480, newWidth));
+                thumbs.style.flex = `0 0 ${Math.round(newWidth)}px`;
+                thumbs.style.maxWidth = `${Math.round(Math.max(newWidth, 220))}px`;
+                thumbs.setAttribute('aria-resizable', 'true');
+                localStorage.setItem('liveThumbWidth', String(Math.round(newWidth)));
+            }
+        }
+
+        function onPointerUp() {
+            dragging = false;
+            document.body.style.userSelect = '';
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('touchmove', onPointerMove);
+            window.removeEventListener('touchend', onPointerUp);
+        }
+
+        // pointer events if supported, otherwise fallback to mouse
+        splitter.addEventListener('pointerdown', onPointerDown);
+        splitter.addEventListener('touchstart', onPointerDown, { passive: false });
+
+        // ensure thumbs sizing adapts on window resize
+        window.addEventListener('resize', () => {
+            const savedW = parseInt(localStorage.getItem('liveThumbWidth') || '0', 10);
+            const contW = container.getBoundingClientRect().width;
+            if (savedW && savedW > contW * 0.8) {
+                // reduce to 40% if it's too large
+                const adj = Math.max(120, Math.round(contW * 0.35));
+                thumbs.style.flex = `0 0 ${adj}px`;
+                localStorage.setItem('liveThumbWidth', String(adj));
+            }
+        });
+    } catch (e) { console.warn('initLiveResizer failed', e); }
+}
+
+// --- WebSocket based live updates (preferred over polling) ---
+function getWebSocketUrl() {
+    try {
+        const url = new URL(SERVER_BASE);
+        const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${url.host}`;
+    } catch (e) {
+        return `ws://localhost:3000`;
+    }
+}
+
+function startLiveSocket() {
+    stopLiveSocket();
+    const wsUrl = getWebSocketUrl();
+    try {
+        _ws = new WebSocket(wsUrl);
+    } catch (e) { _ws = null; return; }
+
+    _ws.addEventListener('open', () => {
+        // subscribe to the session if we have a code
+        if (AppState.sessionCode) {
+            _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode }));
+        }
+    });
+
+    _ws.addEventListener('message', (ev) => {
+        try {
+            const j = JSON.parse(ev.data);
+            if (j && j.type === 'charts:update') {
+                handleServerChartsUpdate(j.charts || []);
+            }
+        } catch (e) {}
+    });
+
+    _ws.addEventListener('close', () => { _ws = null; });
+    _ws.addEventListener('error', () => { /* ignore */ });
+}
+
+function stopLiveSocket() {
+    if (_ws) {
+        try { _ws.close(); } catch (e) {}
+        _ws = null;
+    }
+}
+
+function handleServerChartsUpdate(serverCharts) {
+    // Preserve visible position: find first visible page wrapper
+    const pagesContainer = document.getElementById('live-pages');
+    if (!pagesContainer) return;
+
+    const containerRect = pagesContainer.getBoundingClientRect();
+    const wrappers = Array.from(pagesContainer.querySelectorAll('.live-page-wrapper'));
+    let visible = null;
+    for (const w of wrappers) {
+        const r = w.getBoundingClientRect();
+        if (r.top < containerRect.bottom && r.bottom > containerRect.top) {
+            visible = { chartId: w.dataset.chartId, page: w.dataset.page, offset: r.top - containerRect.top };
+            break;
+        }
+    }
+
+    const local = JSON.stringify(AppState.charts || []);
+    const remote = JSON.stringify(serverCharts || []);
+    if (local === remote) return; // nothing changed
+
+    // update state
+    AppState.charts = serverCharts;
+    try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+
+    // show toast to indicate update
+    showToast('Session updated by Music Director');
+
+    // show a small live-update badge near thumbnails
+    try {
+        const thumbsContainer = document.getElementById('live-thumbs');
+        if (thumbsContainer) {
+            let badge = thumbsContainer.querySelector('.live-update-badge');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'live-update-badge';
+                badge.textContent = 'Updated';
+                // place absolute inside the thumbs container
+                thumbsContainer.style.position = thumbsContainer.style.position || 'relative';
+                thumbsContainer.appendChild(badge);
+            }
+            badge.classList.add('visible');
+            setTimeout(() => { badge.classList.remove('visible'); }, 2000);
+        }
+    } catch (e) {}
+
+    // Re-render live view and attempt to preserve scroll position
+    if (AppState.viewMode === 'live') {
+        renderLiveMode();
+        // animate each chart block briefly to draw attention to the reorder
+        setTimeout(() => {
+            try {
+                const pagesContainer2 = document.getElementById('live-pages');
+                const chartBlocks = pagesContainer2 ? Array.from(pagesContainer2.querySelectorAll('.live-chart-block')) : [];
+                chartBlocks.forEach(cb => {
+                    cb.classList.add('reorder-anim');
+                    setTimeout(() => cb.classList.remove('reorder-anim'), 800);
+                });
+            } catch (e) {}
+        }, 120);
+        // after a short delay to allow DOM to populate, scroll to preserved position
+        setTimeout(() => {
+            if (!visible) return;
+            const pagesContainer2 = document.getElementById('live-pages');
+            const target = pagesContainer2.querySelector(`.live-page-wrapper[data-chart-id="${visible.chartId}"][data-page="${visible.page}"]`);
+            if (target) {
+                const rect = target.getBoundingClientRect();
+                // scroll so that target is at approximately the same offset from top
+                const desiredTop = pagesContainer2.scrollTop + (rect.top - pagesContainer2.getBoundingClientRect().top) - visible.offset;
+                pagesContainer2.scrollTop = Math.max(0, Math.round(desiredTop));
+            }
+        }, 220);
+    }
+}
+
+// IntersectionObserver to highlight current page/thumbnail
+function initLiveHighlighting() {
+    const pagesContainer = document.getElementById('live-pages');
+    const thumbsContainer = document.getElementById('live-thumbs');
+    if (!pagesContainer || !thumbsContainer) return;
+
+    if (_highlightObserver) {
+        _highlightObserver.disconnect();
+        _highlightObserver = null;
+    }
+
+    _highlightObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (!entry.target.dataset) return;
+            const chartId = entry.target.dataset.chartId;
+            // find thumbnail by chartId only (thumbnails are one-per-chart)
+            const selector = `.live-thumb[data-chart-id="${chartId}"]`;
+            const thumb = thumbsContainer.querySelector(selector);
+            if (entry.isIntersecting && entry.intersectionRatio > 0.45) {
+                // mark active (one thumb active at a time)
+                thumbsContainer.querySelectorAll('.live-thumb.active').forEach(t => t.classList.remove('active'));
+                if (thumb) thumb.classList.add('active');
+            } else {
+                // when leaving, only remove if this thumb is active
+                if (thumb && thumb.classList.contains('active')) thumb.classList.remove('active');
+            }
+        });
+    }, { root: pagesContainer, threshold: [0.45] });
+
+    // observe current wrappers
+    Array.from(pagesContainer.querySelectorAll('.live-page-wrapper')).forEach(w => _highlightObserver.observe(w));
+}
+
+// Simple toast
+function showToast(msg, timeout = 2200) {
+    try {
+        const t = document.createElement('div');
+        t.className = 'mw-toast';
+        t.textContent = msg;
+        document.body.appendChild(t);
+        // fade in
+        requestAnimationFrame(() => { t.classList.add('visible'); });
+        setTimeout(() => { t.classList.remove('visible'); setTimeout(() => t.remove(), 300); }, timeout);
+    } catch (e) {}
+}
+
+// Fetch charts from server and update AppState when changes are detected
+async function fetchAndUpdateCharts() {
+    if (!AppState.sessionCode) return;
+    try {
+        const res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`);
+        if (!res.ok) return;
+        const j = await res.json();
+        const serverCharts = Array.isArray(j.charts) ? j.charts : [];
+        // If charts differ (order/content), update and re-render appropriate views
+        const local = JSON.stringify(AppState.charts || []);
+        const remote = JSON.stringify(serverCharts || []);
+        if (local !== remote) {
+            AppState.charts = serverCharts;
+            // persist a local snapshot
+            try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+            // refresh views depending on mode
+            if (AppState.viewMode === 'live') {
+                renderLiveMode();
+            }
+            if (AppState.viewMode === 'organize') {
+                renderOrganizeMode();
+            }
+        }
+    } catch (e) {
+        // ignore transient network errors during polling
+    }
+}
+
+function startLivePolling() {
+    stopLivePolling();
+    // fetch immediately then schedule
+    fetchAndUpdateCharts();
+    _livePollTimer = setInterval(fetchAndUpdateCharts, LIVE_POLL_INTERVAL_MS);
+}
+
+function stopLivePolling() {
+    if (_livePollTimer) {
+        clearInterval(_livePollTimer);
+        _livePollTimer = null;
+    }
 }
 
 // Generate a thumbnail for a PDF data URL using PDF.js (returns Promise<string dataURL>)
@@ -641,11 +998,11 @@ function reorderCharts(fromIndex, toIndex) {
 
 function saveSessionCharts() {
     // Persist charts: try server if director token exists, otherwise use localStorage
-    (async () => {
+    return (async () => {
         if (!AppState.sessionCode) {
             // store as currentSession for demo flows
-            localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
-            return;
+            try { localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts })); } catch (e) {}
+            return false;
         }
         const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
@@ -656,15 +1013,16 @@ function saveSessionCharts() {
                     body: JSON.stringify({ charts: AppState.charts })
                 });
                 if (res.ok) {
-                    localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts }));
-                    return;
+                    try { localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts })); } catch (e) {}
+                    return true;
                 }
             } catch (e) {
                 console.warn('Failed to save charts to server:', e);
             }
         }
-        // fallback
+        // fallback to localStorage
         try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+        return false;
     })();
 }
 
@@ -699,7 +1057,7 @@ function prevChart() {
 }
 
 // View Mode Switching
-function switchToMode(mode) {
+async function switchToMode(mode) {
     AppState.viewMode = mode;
     
     const editView = document.getElementById('edit-view');
@@ -718,17 +1076,29 @@ function switchToMode(mode) {
         if (editBtn) editBtn.classList.add('active');
         // Stop the organize mode ticker and restore the current chart title
         stopOrganizeTicker();
+        // stop live polling when in edit
+        stopLivePolling();
         renderCurrentChart();
     } else if (mode === 'live') {
         if (liveView) liveView.classList.add('active');
         if (liveBtn) liveBtn.classList.add('active');
         stopOrganizeTicker();
+        // If director, persist current organize ordering to server so viewers will be updated
+        if (AppState.isDirector) {
+            try {
+                await saveSessionCharts();
+            } catch (e) {}
+        }
         renderLiveMode();
+        // start websocket for chart updates so viewers get reorders/changes
+        startLiveSocket();
     } else if (mode === 'organize') {
         if (organizeView) organizeView.classList.add('active');
         if (organizeBtn) organizeBtn.classList.add('active');
         // Start date/time ticker in the header and render organize grid
         startOrganizeTicker();
+        // stop websocket when organizing
+        stopLiveSocket();
         showOrganizeHeaderHelp();
         renderOrganizeMode();
     }
