@@ -141,6 +141,23 @@
             </div>
         </div>
 
+        <!-- Pages Editor Modal: edit individual pages within a chart (remove pages) -->
+        <div id="pages-editor-modal" class="modal" aria-hidden="true">
+            <div class="modal-backdrop" id="pages-editor-backdrop"></div>
+            <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pages-editor-title">
+                <header class="modal-header">
+                    <h3 id="pages-editor-title">Edit Chart Pages</h3>
+                    <button id="pages-editor-close" class="btn btn-icon" aria-label="Close">✖</button>
+                </header>
+                <div id="pages-editor-body" class="modal-body">
+                    <div id="pages-editor-grid" class="pages-grid"></div>
+                </div>
+                <footer class="modal-footer">
+                    <button id="pages-editor-done" class="btn btn-primary">Done</button>
+                </footer>
+            </div>
+        </div>
+
         <!-- Viewer Page -->
         <div id="viewer-page" class="page">
             <div class="viewer-container">
@@ -214,8 +231,9 @@
                 <div id="edit-view" class="view active">
                     <div class="pdf-viewer-container">
                         <div class="pdf-display">
-                            <iframe id="pdf-viewer"></iframe>
-                            <canvas id="annotation-canvas"></canvas>
+                    <canvas id="pdf-canvas"></canvas>
+                    <iframe id="pdf-viewer" style="display:none"></iframe>
+                    <canvas id="annotation-canvas"></canvas>
                         </div>
                     </div>
                     <div class="navigation-controls">

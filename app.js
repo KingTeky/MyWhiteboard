@@ -240,11 +240,16 @@ function startSession() {
             AppState.isDirector = true;
             // Update role-based UI (show edit/organize for directors)
             updateRoleUI();
+            // Show viewer but default to Organize so director can clean charts first
             showPage('viewer');
-            // Ensure viewer shows edit mode for directors
-            switchToMode('edit');
-            renderCurrentChart();
-            console.log('startSession completed: viewer shown');
+            try {
+                switchToMode('organize');
+                renderOrganizeMode();
+            } catch (e) {
+                // fallback: if organize fails, default to Live view as a last resort
+                try { switchToMode('live'); renderLiveMode(); } catch (err) {}
+            }
+            console.log('startSession completed: viewer shown in Organize mode');
         } catch (err) {
             console.error('Error while rendering viewer after startSession:', err);
             alert('An error occurred while starting the session. Check the console for details.');
@@ -309,7 +314,9 @@ function addChartToSession(name, dataUrl) {
     AppState.charts.push(chart);
     // Update upload list (if visible) and organize grid (if active)
     displayUploadedFile(chart);
-    if (AppState.viewMode === 'organize') renderOrganizeMode();
+    // After adding a chart, switch the director to Organize mode so they can clean up pages
+    try { if (AppState.isDirector) switchToMode('organize'); } catch (e) {}
+    renderOrganizeMode();
     saveSessionCharts();
 }
 
@@ -380,26 +387,67 @@ function renderCurrentChart() {
     const chart = AppState.charts[AppState.currentChartIndex];
     document.getElementById('current-chart-name').textContent = chart.name;
     
-    // Use iframe to display PDF with native browser viewer (Edit mode)
     const pdfViewer = document.getElementById('pdf-viewer');
-    if (pdfViewer) pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`;
-    
-    // Setup annotation canvas
+    const pdfCanvas = document.getElementById('pdf-canvas');
     const annotationCanvas = document.getElementById('annotation-canvas');
+    if (!annotationCanvas) return;
     const annotationContext = annotationCanvas.getContext('2d');
-    if (!annotationContext) {
-        console.error('Could not get 2d context for annotation canvas');
-        return;
-    }
+    if (!annotationContext) { console.error('Could not get 2d context for annotation canvas'); return; }
     AppState.annotationCanvas = annotationCanvas;
     AppState.annotationContext = annotationContext;
-    
-    // Restore annotations if any
+
+    // If PageManager + pageMap exists for this chart, render the selected page to canvas
+    try {
+        if (window.pdfjsLib && window._pageManager && Array.isArray(chart.pageMap) && chart.pageMap.length > 0) {
+            // hide iframe fallback
+            if (pdfViewer) pdfViewer.style.display = 'none';
+            if (pdfCanvas) pdfCanvas.style.display = 'block';
+            const pageId = chart.pageMap[Math.max(0, AppState.currentPageNumber - 1)];
+            const pObj = window._pageManager.getPage(pageId) || {};
+            const originalPage = pObj.pageIndex || AppState.currentPageNumber;
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+            pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+                return pdf.getPage(originalPage).then(page => {
+                    const container = pdfCanvas.parentElement || document.querySelector('.pdf-display');
+                    const containerWidth = container ? Math.max(320, container.clientWidth - 20) : 900;
+                    const viewport = page.getViewport({ scale: 1 });
+                    const scale = Math.min(containerWidth / viewport.width, 1);
+                    const scaled = page.getViewport({ scale });
+                    // size pdf canvas
+                    pdfCanvas.width = scaled.width; pdfCanvas.height = scaled.height;
+                    pdfCanvas.style.width = '100%';
+                    pdfCanvas.style.height = 'auto';
+                    const ctx = pdfCanvas.getContext('2d');
+                    page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
+                        // size annotation canvas to match pdf canvas pixels
+                        annotationCanvas.width = pdfCanvas.width; annotationCanvas.height = pdfCanvas.height;
+                        annotationCanvas.style.width = '100%'; annotationCanvas.style.height = 'auto';
+                        // render vector annotations via PageManager if available
+                        try {
+                            if (pageId && window._pageManager) {
+                                try { window._pageManager.renderAnnotationToCanvas(pageId, annotationCanvas); } catch (e) {}
+                            } else {
+                                // fallback to legacy PNG annotations
+                                restoreAnnotations();
+                            }
+                        } catch (e) { restoreAnnotations(); }
+                    }).catch(err => { console.warn('PDF render error', err); if (pdfViewer) { pdfViewer.style.display='block'; pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`; } });
+                });
+            }).catch(err => { console.warn('Failed to load PDF in canvas mode', err); if (pdfViewer) { pdfViewer.style.display='block'; pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`; } });
+            // update page indicator
+            document.getElementById('page-indicator').textContent = `Chart ${AppState.currentChartIndex + 1} of ${AppState.charts.length}`;
+            return;
+        }
+    } catch (e) { console.warn('Canvas render path failed', e); }
+
+    // fallback: use iframe PDF viewer
+    try { if (pdfCanvas) pdfCanvas.style.display = 'none'; } catch (e) {}
+    if (pdfViewer) pdfViewer.style.display = 'block'; if (pdfViewer) pdfViewer.src = `${chart.data}#page=${AppState.currentPageNumber}`;
+    // Restore annotations (legacy path) — if PageManager is present but pageMap missing, restoreAnnotations will try PageManager where possible
     restoreAnnotations();
     
     // Update page indicator
-    document.getElementById('page-indicator').textContent = 
-        `Chart ${AppState.currentChartIndex + 1} of ${AppState.charts.length}`;
+    document.getElementById('page-indicator').textContent = `Chart ${AppState.currentChartIndex + 1} of ${AppState.charts.length}`;
 }
 
 // Render Live mode: continuous vertical pages with annotations and thumbnails
@@ -490,27 +538,41 @@ function renderLiveMode() {
 
         pdfjsLib.getDocument(chart.data).promise.then(pdf => {
             chartBlock.innerHTML = '';
-            for (let p = 1; p <= pdf.numPages; p++) {
+            // Determine pages to render: prefer chart.pageMap (PageManager) when present
+            let pagesSpec = [];
+            if (Array.isArray(chart.pageMap) && chart.pageMap.length > 0 && window._pageManager) {
+                pagesSpec = chart.pageMap.map((pid, idx) => {
+                    const pObj = window._pageManager.getPage(pid) || {};
+                    return { pageIndex: pObj.pageIndex || (idx + 1), pageId: pid, logicalPage: idx + 1 };
+                });
+            } else {
+                for (let p = 1; p <= pdf.numPages; p++) pagesSpec.push({ pageIndex: p, pageId: null, logicalPage: p });
+            }
+
+            pagesSpec.forEach(spec => {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'live-page-wrapper';
-                // include stable chart id so we can map across reorderings
+                // stable chart id and page mapping
                 wrapper.dataset.chartId = chart.id;
                 wrapper.dataset.chartIndex = chartIdx;
-                wrapper.dataset.page = p;
+                wrapper.dataset.page = spec.logicalPage;
+                if (spec.pageIndex) wrapper.dataset.pageIndex = spec.pageIndex;
+                if (spec.pageId) wrapper.dataset.pageId = spec.pageId;
                 wrapper.dataset.rendered = '0';
                 wrapper.style.minHeight = '200px';
                 chartBlock.appendChild(wrapper);
-            }
+            });
 
             const observer = new IntersectionObserver((entries, obs) => {
                 entries.forEach(entry => {
                     if (!entry.isIntersecting) return;
                     const w = entry.target;
-                    const p = parseInt(w.dataset.page, 10);
+                    const logicalP = parseInt(w.dataset.page, 10);
                     const cIdx = parseInt(w.dataset.chartIndex, 10);
+                    const originalPage = w.dataset.pageIndex ? parseInt(w.dataset.pageIndex, 10) : logicalP;
                     if (w.dataset.rendered === '1') { obs.unobserve(w); return; }
 
-                    pdf.getPage(p).then(page => {
+                    pdf.getPage(originalPage).then(page => {
                         const viewport = page.getViewport({ scale: 1 });
                         const scale = Math.min(900 / viewport.width, 1);
                         const scaled = page.getViewport({ scale });
@@ -519,23 +581,10 @@ function renderLiveMode() {
                         canvas.height = scaled.height;
                         const ctx = canvas.getContext('2d');
                         page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
-                            // overlay vector annotations from PageManager when available
-                            try {
-                                let pageId = null;
-                                const chartObj = AppState.charts[cIdx];
-                                if (chartObj && Array.isArray(chartObj.pageMap) && chartObj.pageMap.length >= p) {
-                                    pageId = chartObj.pageMap[p - 1];
-                                }
-                                if (pageId && window._pageManager) {
-                                    const strokes = window._pageManager.getAnnotation(pageId) || [];
-                                    if (strokes && strokes.length) {
-                                        try { window.PageManager_renderStrokes(ctx, strokes, 1); } catch (e) {}
-                                    }
-                                }
-                            } catch (e) {}
+                            // annotations will be rendered into the overlay canvas (created below) when PageManager is available
 
-                            // legacy bitmap annotations
-                            const key = `${AppState.sessionCode}_${cIdx}_${p}`;
+                            // legacy bitmap annotations (logical page index)
+                            const key = `${AppState.sessionCode}_${cIdx}_${logicalP}`;
                             const ann = AppState.annotations[key];
                             if (ann) {
                                 const img = new Image();
@@ -545,7 +594,37 @@ function renderLiveMode() {
                                 img.src = ann;
                             }
 
+                            // append the rendered page canvas
                             w.appendChild(canvas);
+
+                            // create an overlay canvas for live vector annotations
+                            try {
+                                const overlay = document.createElement('canvas');
+                                overlay.className = 'live-annotation-canvas';
+                                overlay.width = canvas.width; overlay.height = canvas.height;
+                                overlay.style.position = 'absolute'; overlay.style.top = '0'; overlay.style.left = '0';
+                                overlay.style.width = '100%'; overlay.style.height = '100%';
+                                overlay.dataset.pageId = w.dataset.pageId || (Array.isArray(chart.pageMap) ? chart.pageMap[logicalP - 1] : '');
+                                // ensure wrapper is positioned for absolute overlay
+                                try { w.style.position = w.style.position || 'relative'; } catch (e) {}
+                                // default interactivity depends on director + annotationMode
+                                overlay.style.pointerEvents = (AppState.annotationMode && AppState.isDirector) ? 'auto' : 'none';
+                                // attach drawing handlers which will set AppState.annotationCanvas/context dynamically
+                                overlay.addEventListener('mousedown', startDrawing);
+                                overlay.addEventListener('mousemove', draw);
+                                overlay.addEventListener('mouseup', stopDrawing);
+                                overlay.addEventListener('mouseout', stopDrawing);
+                                // touch support
+                                overlay.addEventListener('touchstart', function(e){ e.preventDefault(); const t = e.touches[0]; overlay.dispatchEvent(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY })); });
+                                overlay.addEventListener('touchmove', function(e){ e.preventDefault(); const t = e.touches[0]; overlay.dispatchEvent(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY })); });
+                                overlay.addEventListener('touchend', function(e){ e.preventDefault(); overlay.dispatchEvent(new MouseEvent('mouseup', {})); });
+                                w.appendChild(overlay);
+                                // render any existing vector annotations into the overlay
+                                try {
+                                    const pid = overlay.dataset.pageId;
+                                    if (pid && window._pageManager) window._pageManager.renderAnnotationToCanvas(pid, overlay);
+                                } catch (e) {}
+                            } catch (e) {}
 
                             w.dataset.rendered = '1';
                             obs.unobserve(w);
@@ -669,6 +748,22 @@ function adjustRightDockColumns(minColWidth = 140) {
         const available = Math.max(0, rect.width - 12); // account for padding/gap
         const cols = Math.max(1, Math.floor(available / minColWidth));
         rightDock.style.gridTemplateColumns = `repeat(${cols}, minmax(${Math.max(96, Math.floor(minColWidth*0.8))}px, 1fr))`;
+    } catch (e) {}
+}
+
+// Enable/disable pointer interactivity for live per-page annotation overlays.
+function updateLiveOverlayInteractivity() {
+    try {
+        const overlays = Array.from(document.querySelectorAll('.live-annotation-canvas'));
+        overlays.forEach(o => {
+            if (AppState.annotationMode && AppState.isDirector) {
+                o.style.pointerEvents = 'auto';
+                o.classList.add('active');
+            } else {
+                o.style.pointerEvents = 'none';
+                o.classList.remove('active');
+            }
+        });
     } catch (e) {}
 }
 
@@ -957,7 +1052,21 @@ class SidebarManager {
                         if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
                     }
                     // fallback: switch to edit and open this chart/page
-                    try { AppState.currentChartIndex = c; AppState.currentPageNumber = idx + 1; switchToMode('edit'); renderCurrentChart(); } catch (e) {}
+                    try {
+                        AppState.currentChartIndex = c; AppState.currentPageNumber = idx + 1;
+                        // switch to live and render; then scroll to the specific page if present
+                        switchToMode('live');
+                        renderLiveMode();
+                        setTimeout(() => {
+                            try {
+                                const pagesContainer = document.getElementById('live-pages');
+                                if (!pagesContainer) return;
+                                const selector = `.live-page-wrapper[data-chart-id="${AppState.charts[c] ? AppState.charts[c].id : ''}"][data-page="${idx+1}"]`;
+                                const target = pagesContainer.querySelector(selector);
+                                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            } catch (err) {}
+                        }, 250);
+                    } catch (e) {}
                     return;
                 }
             }
@@ -1039,9 +1148,16 @@ function startLiveSocket() {
                         // if current viewer is on this page, re-render annotation canvas
                         try {
                             const current = getCurrentPageId();
-                            if (current === pageId && AppState.annotationCanvas && window._pageManager) {
-                                window._pageManager.renderAnnotationToCanvas(pageId, AppState.annotationCanvas);
-                            }
+                                if (current === pageId && AppState.annotationCanvas && window._pageManager) {
+                                    window._pageManager.renderAnnotationToCanvas(pageId, AppState.annotationCanvas);
+                                }
+                                // also update any live overlay canvases showing this page
+                                try {
+                                    const overlays = Array.from(document.querySelectorAll(`.live-annotation-canvas[data-page-id="${pageId}"]`));
+                                    overlays.forEach(o => {
+                                        try { window._pageManager.renderAnnotationToCanvas(pageId, o); } catch (e) {}
+                                    });
+                                } catch (e) {}
                         } catch (e) {}
                         // update sidebar thumbnail if present
                         try { if (window._sidebarManager && page.thumb) window._sidebarManager.updateThumb(pageId, page.thumb); } catch (e) {}
@@ -1254,16 +1370,29 @@ function initLiveHighlighting() {
             // same lazy render as in renderLiveMode for this chart
             pdfjsLib.getDocument(chart.data).promise.then(pdf => {
                 chartBlock.innerHTML = '';
-                for (let p = 1; p <= pdf.numPages; p++) {
+                // prefer chart.pageMap when available
+                let pagesSpec = [];
+                if (Array.isArray(chart.pageMap) && chart.pageMap.length > 0 && window._pageManager) {
+                    pagesSpec = chart.pageMap.map((pid, idx) => {
+                        const pObj = window._pageManager.getPage(pid) || {};
+                        return { pageIndex: pObj.pageIndex || (idx + 1), pageId: pid, logicalPage: idx + 1 };
+                    });
+                } else {
+                    for (let p = 1; p <= pdf.numPages; p++) pagesSpec.push({ pageIndex: p, pageId: null, logicalPage: p });
+                }
+
+                pagesSpec.forEach(spec => {
                     const wrapper = document.createElement('div');
                     wrapper.className = 'live-page-wrapper';
                     wrapper.dataset.chartId = chart.id;
                     wrapper.dataset.chartIndex = chartIdx;
-                    wrapper.dataset.page = p;
+                    wrapper.dataset.page = spec.logicalPage;
+                    if (spec.pageIndex) wrapper.dataset.pageIndex = spec.pageIndex;
+                    if (spec.pageId) wrapper.dataset.pageId = spec.pageId;
                     wrapper.dataset.rendered = '0';
                     wrapper.style.minHeight = '200px';
                     chartBlock.appendChild(wrapper);
-                }
+                });
 
                 const observer = new IntersectionObserver((entries, obs) => {
                     entries.forEach(entry => {
@@ -1280,15 +1409,7 @@ function initLiveHighlighting() {
                             canvas.width = scaled.width; canvas.height = scaled.height;
                             const ctx = canvas.getContext('2d');
                             page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
-                                // overlay annotations
-                                try {
-                                    let pageId = null;
-                                    if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= p) pageId = chart.pageMap[p-1];
-                                    if (pageId && window._pageManager) {
-                                        const strokes = window._pageManager.getAnnotation(pageId) || [];
-                                        if (strokes && strokes.length) window.PageManager_renderStrokes(ctx, strokes, 1);
-                                    }
-                                } catch (e) {}
+                                // annotations will be rendered into the overlay canvas (created below) when PageManager is available
                                 // legacy bitmap annotations
                                 const key = `${AppState.sessionCode}_${chartIdx}_${p}`;
                                 const ann = AppState.annotations[key];
@@ -1296,6 +1417,29 @@ function initLiveHighlighting() {
                                     const img = new Image(); img.onload = () => { try { ctx.drawImage(img,0,0,canvas.width,canvas.height); } catch(e){} }; img.src = ann;
                                 }
                                 w.appendChild(canvas);
+                                try {
+                                    const overlay = document.createElement('canvas');
+                                    overlay.className = 'live-annotation-canvas';
+                                    overlay.width = canvas.width; overlay.height = canvas.height;
+                                    overlay.style.position = 'absolute'; overlay.style.top = '0'; overlay.style.left = '0';
+                                    overlay.style.width = '100%'; overlay.style.height = '100%';
+                                    overlay.dataset.pageId = w.dataset.pageId || (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= p ? chart.pageMap[p-1] : '');
+                                    try { w.style.position = w.style.position || 'relative'; } catch (e) {}
+                                    overlay.style.pointerEvents = (AppState.annotationMode && AppState.isDirector) ? 'auto' : 'none';
+                                    overlay.addEventListener('mousedown', startDrawing);
+                                    overlay.addEventListener('mousemove', draw);
+                                    overlay.addEventListener('mouseup', stopDrawing);
+                                    overlay.addEventListener('mouseout', stopDrawing);
+                                    overlay.addEventListener('touchstart', function(e){ e.preventDefault(); const t = e.touches[0]; overlay.dispatchEvent(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY })); });
+                                    overlay.addEventListener('touchmove', function(e){ e.preventDefault(); const t = e.touches[0]; overlay.dispatchEvent(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY })); });
+                                    overlay.addEventListener('touchend', function(e){ e.preventDefault(); overlay.dispatchEvent(new MouseEvent('mouseup', {})); });
+                                    w.appendChild(overlay);
+                                    // render any existing vector annotations into the overlay
+                                    try {
+                                        const pid = overlay.dataset.pageId;
+                                        if (pid && window._pageManager) window._pageManager.renderAnnotationToCanvas(pid, overlay);
+                                    } catch (e) {}
+                                } catch (e) {}
                                 w.dataset.rendered = '1'; obs.unobserve(w);
                             }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
                         }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
@@ -1393,6 +1537,29 @@ function generateThumbnail(chart, maxWidth = 300) {
     }
 }
 
+// Generate thumbnail for a specific page number (1-based) in a chart PDF
+function generatePageThumbnail(chart, pageNumber = 1, maxWidth = 300) {
+    if (!window['pdfjsLib'] || !chart || !chart.data) return Promise.resolve(null);
+    try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        return pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+            return pdf.getPage(pageNumber).then(page => {
+                const viewport = page.getViewport({ scale: 1 });
+                const scale = Math.min(maxWidth / viewport.width, 1);
+                const scaled = page.getViewport({ scale });
+                const canvas = document.createElement('canvas');
+                canvas.width = scaled.width;
+                canvas.height = scaled.height;
+                const ctx = canvas.getContext('2d');
+                const renderContext = { canvasContext: ctx, viewport: scaled };
+                return page.render(renderContext).promise.then(() => {
+                    try { return canvas.toDataURL('image/png'); } catch (e) { return null; }
+                }).catch(() => null);
+            }).catch(() => null);
+        }).catch(() => null);
+    } catch (e) { return Promise.resolve(null); }
+}
+
 // Initialize SortableJS on the charts grid for touch-friendly drag/reorder
 let _sortableInstance = null;
 function initSortable() {
@@ -1466,10 +1633,20 @@ function renderOrganizeMode() {
             AppState.currentChartIndex = index;
         });
 
-        // Double click opens in edit mode
+        // Double click opens in Live mode and focuses this chart
         card.addEventListener('dblclick', () => {
+            AppState.currentChartIndex = index;
             AppState.currentPageNumber = 1;
-            switchToMode('edit');
+            try { switchToMode('live'); renderLiveMode(); } catch (e) {}
+            // scroll to chart block once live is rendered
+            setTimeout(() => {
+                try {
+                    const pagesContainer = document.getElementById('live-pages');
+                    if (!pagesContainer) return;
+                    const target = pagesContainer.querySelector(`.live-chart-block[data-chart-index="${index}"]`);
+                    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } catch (err) {}
+            }, 250);
         });
 
         // Keyboard interactions
@@ -1507,6 +1684,9 @@ function renderOrganizeMode() {
                 <div class="chart-info">
                     <h3>${escapeHtml(chart.name)}</h3>
                 </div>
+            <div class="chart-actions">
+                <button class="btn btn-secondary edit-pages-btn" data-chart-index="${index}" title="Edit pages" aria-label="Edit pages">Edit Pages</button>
+            </div>
         `;
 
         // Delegate move control clicks
@@ -1536,6 +1716,14 @@ function renderOrganizeMode() {
                 e.preventDefault();
                 b.click();
             }
+        });
+    });
+
+    // Hook up Edit Pages buttons
+    grid.querySelectorAll('.edit-pages-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const ci = parseInt(btn.dataset.chartIndex, 10);
+            openChartPagesEditor(ci);
         });
     });
 
@@ -1631,6 +1819,8 @@ function prevChart() {
 
 // View Mode Switching
 async function switchToMode(mode) {
+    // Normalize legacy 'edit' mode to live since Edit mode is removed; repurpose edit button as orientation toggle
+    if (mode === 'edit') mode = 'live';
     AppState.viewMode = mode;
     
     const editView = document.getElementById('edit-view');
@@ -1644,15 +1834,7 @@ async function switchToMode(mode) {
     [editView, liveView, organizeView].forEach(v => { if (v) v.classList.remove('active'); });
     [editBtn, liveBtn, organizeBtn].forEach(b => { if (b) b.classList.remove('active'); });
 
-    if (mode === 'edit') {
-        if (editView) editView.classList.add('active');
-        if (editBtn) editBtn.classList.add('active');
-        // Stop the organize mode ticker and restore the current chart title
-        stopOrganizeTicker();
-        // stop live polling when in edit
-        stopLivePolling();
-        renderCurrentChart();
-    } else if (mode === 'live') {
+    if (mode === 'live') {
         if (liveView) liveView.classList.add('active');
         if (liveBtn) liveBtn.classList.add('active');
         stopOrganizeTicker();
@@ -1679,9 +1861,44 @@ async function switchToMode(mode) {
     }
 }
 
+// Live orientation helpers: vertical (default) or horizontal view
+function setLiveOrientation(isHorizontal) {
+    try {
+        const pages = document.getElementById('live-pages');
+        const editBtn = document.getElementById('edit-mode-btn');
+        if (!pages) return;
+        if (isHorizontal) {
+            pages.classList.add('horizontal');
+            if (editBtn) editBtn.classList.add('active');
+            localStorage.setItem('liveOrientation', 'horizontal');
+        } else {
+            pages.classList.remove('horizontal');
+            if (editBtn) editBtn.classList.remove('active');
+            localStorage.setItem('liveOrientation', 'vertical');
+        }
+        // columns might need recalculation after layout change
+        try { adjustRightDockColumns(); } catch (e) {}
+    } catch (e) {}
+}
+
+function toggleLiveOrientation() {
+    try {
+        const pages = document.getElementById('live-pages');
+        if (!pages) return;
+        const isHoriz = pages.classList.toggle('horizontal');
+        const editBtn = document.getElementById('edit-mode-btn');
+        if (editBtn) {
+            if (isHoriz) editBtn.classList.add('active'); else editBtn.classList.remove('active');
+        }
+        localStorage.setItem('liveOrientation', isHoriz ? 'horizontal' : 'vertical');
+        try { adjustRightDockColumns(); } catch (e) {}
+    } catch (e) {}
+}
+
 // Role-based UI: show/hide director-only controls and enforce default mode for attendees
 function updateRoleUI() {
-    const directorOnlyIds = ['edit-mode-btn', 'organize-mode-btn', 'add-charts-btn', 'annotation-btn'];
+    // 'edit-mode-btn' has been repurposed to toggle live orientation and is visible to all viewers
+    const directorOnlyIds = ['organize-mode-btn', 'add-charts-btn', 'annotation-btn'];
     directorOnlyIds.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = AppState.isDirector ? '' : 'none';
@@ -1696,9 +1913,163 @@ function updateRoleUI() {
         // If currently in edit/organize, switch to live
         if (AppState.viewMode !== 'live') switchToMode('live');
     } else {
-        // Director gets Edit/Organize available. Default to edit if not already.
-        if (AppState.viewMode !== 'edit') switchToMode('edit');
+        // Director gets Edit/Organize available. Do not force-switch modes here.
+        // Let flows (upload/start) decide whether to show Organize or Edit.
     }
+    try { updateLiveOverlayInteractivity(); } catch (e) {}
+}
+
+// Pages editor: open a modal to display per-page thumbnails and allow removal
+function openChartPagesEditor(chartIndex) {
+    try {
+        const chart = AppState.charts[chartIndex];
+        if (!chart) return;
+        // Ensure PageManager pageMap exists for this chart
+        (async () => {
+            if (window._pageManager && (!Array.isArray(chart.pageMap) || chart.pageMap.length === 0)) {
+                try { await window._pageManager.createPagesFromPdf(chart); } catch (e) { /* ignore */ }
+            }
+            renderPagesEditor(chartIndex);
+            const modal = document.getElementById('pages-editor-modal');
+            if (!modal) return;
+            modal.setAttribute('aria-hidden', 'false'); modal.classList.add('visible');
+            // Attach backdrop and close handlers
+            const backdrop = document.getElementById('pages-editor-backdrop');
+            const closeBtn = document.getElementById('pages-editor-close');
+            const doneBtn = document.getElementById('pages-editor-done');
+            function closeHandler() { closePagesEditor(); }
+            if (backdrop) backdrop.addEventListener('click', closeHandler);
+            if (closeBtn) closeBtn.addEventListener('click', closeHandler);
+            if (doneBtn) doneBtn.addEventListener('click', closeHandler);
+        })();
+    } catch (e) { console.warn('openChartPagesEditor failed', e); }
+}
+
+function closePagesEditor() {
+    try {
+        const modal = document.getElementById('pages-editor-modal');
+        if (!modal) return;
+        modal.setAttribute('aria-hidden', 'true'); modal.classList.remove('visible');
+        // cleanup grid contents but keep modal structure intact so it can be re-used
+        const grid = document.getElementById('pages-editor-grid'); if (grid) grid.innerHTML = '';
+        // also remove any transient event listeners on backdrop/close/done to avoid duplicates
+        try {
+            const backdrop = document.getElementById('pages-editor-backdrop');
+            const closeBtn = document.getElementById('pages-editor-close');
+            const doneBtn = document.getElementById('pages-editor-done');
+            if (backdrop) {
+                const newBackdrop = backdrop.cloneNode(true);
+                backdrop.parentNode.replaceChild(newBackdrop, backdrop);
+            }
+            if (closeBtn) {
+                const nc = closeBtn.cloneNode(true);
+                closeBtn.parentNode.replaceChild(nc, closeBtn);
+            }
+            if (doneBtn) {
+                const nd = doneBtn.cloneNode(true);
+                doneBtn.parentNode.replaceChild(nd, doneBtn);
+            }
+        } catch (e) {}
+    } catch (e) {}
+}
+
+function renderPagesEditor(chartIndex) {
+    try {
+        const chart = AppState.charts[chartIndex];
+        if (!chart) return;
+        const grid = document.getElementById('pages-editor-grid');
+        if (!grid) return;
+        grid.innerHTML = '';
+        const pageMap = Array.isArray(chart.pageMap) ? chart.pageMap.slice() : [];
+        // If no pageMap, try to create pages (synchronous guard)
+        if (pageMap.length === 0 && window._pageManager && chart.data) {
+            try { pageMap.push(...(window._pageManager.getChartPageMap ? window._pageManager.getChartPageMap(chart.id) : [])); } catch (e) {}
+        }
+        if (pageMap.length === 0) {
+            grid.innerHTML = '<div class="sidebar-empty">No pages available for this chart yet.</div>';
+            return;
+        }
+        pageMap.forEach((pageId, idx) => {
+            const pageObj = window._pageManager ? window._pageManager.getPage(pageId) : null;
+            const card = document.createElement('div'); card.className = 'page-card';
+            const img = document.createElement('img'); img.className = 'page-thumb'; img.alt = `Page ${idx+1}`;
+            // Use per-page thumb when available. If missing, generate a page-specific thumbnail
+            if (pageObj && pageObj.thumb) {
+                img.src = pageObj.thumb;
+            } else if (chart && chart.data) {
+                // placeholder while generating
+                img.src = '';
+                img.dataset.loading = '1';
+                const originalPageIndex = (pageObj && pageObj.pageIndex) ? pageObj.pageIndex : (idx + 1);
+                generatePageThumbnail(chart, originalPageIndex, 220).then(dataUrl => {
+                    try {
+                        if (dataUrl) {
+                            img.src = dataUrl;
+                            delete img.dataset.loading;
+                            // cache back into PageManager if available
+                            if (pageObj && window._pageManager && window._pageManager.store && window._pageManager.store.pages) {
+                                try { window._pageManager.store.pages[pageId].thumb = dataUrl; } catch (e) {}
+                            }
+                        } else {
+                            // fallback to chart-level thumb if available
+                            img.src = chart.thumb || '';
+                            delete img.dataset.loading;
+                        }
+                    } catch (e) { img.src = chart.thumb || ''; delete img.dataset.loading; }
+                }).catch(() => { img.src = chart.thumb || ''; delete img.dataset.loading; });
+            } else {
+                img.src = chart.thumb || '';
+            }
+            const label = document.createElement('div'); label.className = 'page-label'; label.textContent = `Page ${idx + 1}`;
+            const actions = document.createElement('div'); actions.className = 'page-actions';
+            const removeBtn = document.createElement('button'); removeBtn.className = 'page-remove-btn'; removeBtn.textContent = 'Remove';
+            removeBtn.title = 'Remove this page from chart';
+            removeBtn.addEventListener('click', () => {
+                if (!confirm(`Remove page ${idx + 1} from chart "${chart.name}"? This cannot be undone.`)) return;
+                removePageFromChart(chartIndex, idx);
+                // re-render editor after removal
+                renderPagesEditor(chartIndex);
+            });
+            actions.appendChild(removeBtn);
+            card.appendChild(img); card.appendChild(label); card.appendChild(actions);
+            grid.appendChild(card);
+        });
+    } catch (e) { console.warn('renderPagesEditor failed', e); }
+}
+
+function removePageFromChart(chartIndex, pageIndex) {
+    try {
+        const chart = AppState.charts[chartIndex];
+        if (!chart || !Array.isArray(chart.pageMap)) return false;
+        if (pageIndex < 0 || pageIndex >= chart.pageMap.length) return false;
+        const pageId = chart.pageMap[pageIndex];
+        // Remove from chart.pageMap
+        chart.pageMap.splice(pageIndex, 1);
+        // Remove page record from PageManager store
+        try {
+            if (window._pageManager && window._pageManager.store && window._pageManager.store.pages) {
+                delete window._pageManager.store.pages[pageId];
+                // reindex remaining pages' pageIndex
+                const remaining = chart.pageMap || [];
+                remaining.forEach((pid, i) => {
+                    if (window._pageManager.store.pages[pid]) window._pageManager.store.pages[pid].pageIndex = i + 1;
+                });
+                try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+            }
+        } catch (e) {}
+        // save chart state and persist to server/local
+        try { saveSessionCharts(); } catch (e) {}
+        // clamp current page number if we're editing this chart
+        try {
+            if (AppState.currentChartIndex === chartIndex) {
+                const max = Array.isArray(chart.pageMap) ? chart.pageMap.length : 0;
+                if (max === 0) AppState.currentPageNumber = 1; else if (AppState.currentPageNumber > max) AppState.currentPageNumber = max;
+            }
+        } catch (e) {}
+        // re-render organize and live views if active
+        try { if (AppState.viewMode === 'organize') renderOrganizeMode(); if (AppState.viewMode === 'live') renderLiveMode(); } catch (e) {}
+        return true;
+    } catch (e) { console.warn('removePageFromChart failed', e); return false; }
 }
 
 // Annotations
@@ -1719,13 +2090,15 @@ function toggleAnnotationMode() {
     try {
         const toolbar = document.getElementById('annotation-toolbar');
         if (toolbar) {
-            if (AppState.annotationMode && FEATURE_PAGE_MANAGER && window._pageManager) {
+            // Only show toolbar to Music Director when PageManager is available
+            if (AppState.annotationMode && AppState.isDirector && FEATURE_PAGE_MANAGER && window._pageManager) {
                 toolbar.hidden = false;
             } else {
                 toolbar.hidden = true;
             }
         }
     } catch (e) {}
+    try { updateLiveOverlayInteractivity(); } catch (e) {}
 }
 
 function saveAnnotations() {
@@ -1784,7 +2157,23 @@ function restoreAnnotations() {
 
 // Drawing
 function startDrawing(e) {
+    // Only allow drawing when annotation mode is active
     if (!AppState.annotationMode) return;
+    // If in Live view, only directors may draw
+    if (AppState.viewMode === 'live' && !AppState.isDirector) return;
+
+    // Determine which canvas the event targets. Prefer per-page overlay canvases.
+    let canvasEl = null;
+    if (e.target && e.target.classList && e.target.classList.contains('live-annotation-canvas')) {
+        canvasEl = e.target;
+    } else {
+        // fallback to the global annotation canvas used in Edit mode
+        canvasEl = document.getElementById('annotation-canvas') || AppState.annotationCanvas;
+    }
+    if (!canvasEl) return;
+
+    try { AppState.annotationCanvas = canvasEl; AppState.annotationContext = canvasEl.getContext('2d'); } catch (err) {}
+
     AppState.isDrawing = true;
     const rect = AppState.annotationCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -1814,7 +2203,10 @@ function getCurrentPageId() {
 function undoLastStroke() {
     try {
         if (!window._pageManager) return false;
-        const pageId = getCurrentPageId();
+        // prefer overlay canvas pageId if available
+        let pageId = null;
+        try { if (AppState.annotationCanvas && AppState.annotationCanvas.dataset && AppState.annotationCanvas.dataset.pageId) pageId = AppState.annotationCanvas.dataset.pageId; } catch (e) {}
+        if (!pageId) pageId = getCurrentPageId();
         if (!pageId) return false;
         const stack = AppState.pageUndoStacks[pageId] || [];
         if (stack.length === 0) return false;
@@ -1832,7 +2224,10 @@ function undoLastStroke() {
 function clearPageAnnotations() {
     try {
         if (!window._pageManager) return false;
-        const pageId = getCurrentPageId();
+        // prefer overlay canvas pageId if available
+        let pageId = null;
+        try { if (AppState.annotationCanvas && AppState.annotationCanvas.dataset && AppState.annotationCanvas.dataset.pageId) pageId = AppState.annotationCanvas.dataset.pageId; } catch (e) {}
+        if (!pageId) pageId = getCurrentPageId();
         if (!pageId) return false;
         const existing = window._pageManager.getAnnotation(pageId) || [];
         // push snapshot for undo
@@ -1883,10 +2278,16 @@ function stopDrawing() {
         const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${AppState.currentPageNumber}`;
         // use pageManager if available
         if (window._pageManager) {
-            // determine pageId: if chart has pageMap, pick the matching page for currentPageNumber
-            const chart = (AppState.charts || [])[AppState.currentChartIndex];
+            // determine pageId: prefer the active overlay's pageId if present
             let pageId = null;
-            if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= AppState.currentPageNumber) {
+            try {
+                if (AppState.annotationCanvas && AppState.annotationCanvas.dataset && AppState.annotationCanvas.dataset.pageId) {
+                    pageId = AppState.annotationCanvas.dataset.pageId;
+                }
+            } catch (e) {}
+            // fallback to chart/pageMap mapping
+            const chart = (AppState.charts || [])[AppState.currentChartIndex];
+            if (!pageId && chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= AppState.currentPageNumber) {
                 pageId = chart.pageMap[AppState.currentPageNumber - 1];
             }
             // fallback to key-based synthetic id
@@ -1957,14 +2358,15 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateThemeToggleIcons(theme) {
         const toggles = document.querySelectorAll('.theme-toggle');
         toggles.forEach(btn => {
-            // Show an icon representing the CURRENT theme so the toggle visually
-            // matches what the user sees: moon for dark, sun for light.
+            // Show an icon that REPRESENTS the ACTION the toggle will perform.
+            // When currently in light mode, show the moon (click => switch to dark).
+            // When currently in dark mode, show the sun (click => switch to light).
             if (theme === 'dark') {
-                // Moon icon when in dark mode
-                btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>\n                    </svg>`;
-            } else {
-                // Sun icon when in light mode
+                // Show sun icon to indicate clicking will switch to light mode
                 btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <circle cx="12" cy="12" r="4"></circle>\n                        <path d="M12 2v2"></path>\n                        <path d="M12 20v2"></path>\n                        <path d="M4.93 4.93l1.41 1.41"></path>\n                        <path d="M17.66 17.66l1.41 1.41"></path>\n                        <path d="M2 12h2"></path>\n                        <path d="M20 12h2"></path>\n                        <path d="M4.93 19.07l1.41-1.41"></path>\n                        <path d="M17.66 6.34l1.41-1.41"></path>\n                    </svg>`;
+            } else {
+                // Show moon icon to indicate clicking will switch to dark mode
+                btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>\n                    </svg>`;
             }
         });
     }
@@ -2194,6 +2596,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update UI based on role (director vs attendee)
     try { updateRoleUI(); } catch (e) { /* non-fatal */ }
 
+    // Apply saved live orientation preference (vertical/horizontal)
+    try {
+        const saved = localStorage.getItem('liveOrientation') || 'vertical';
+        setLiveOrientation(saved === 'horizontal');
+    } catch (e) {}
+
     // Attach click listeners to any theme toggle buttons (present on multiple pages)
     document.querySelectorAll('.theme-toggle').forEach(btn => {
         btn.addEventListener('click', function() {
@@ -2290,7 +2698,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (nextChartBtn) nextChartBtn.addEventListener('click', nextChart);
 
     const editBtn = document.getElementById('edit-mode-btn');
-    if (editBtn) editBtn.addEventListener('click', () => switchToMode('edit'));
+    if (editBtn) editBtn.addEventListener('click', () => toggleLiveOrientation());
     const liveBtn = document.getElementById('live-mode-btn');
     if (liveBtn) liveBtn.addEventListener('click', () => switchToMode('live'));
 
