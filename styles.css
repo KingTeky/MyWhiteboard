@@ -97,6 +97,12 @@ body {
 .container {
     padding-top: 4rem;
     margin-bottom: 4rem;
+    /* center page content and constrain line-length for desktop */
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
 }
 
 /* Horizontal live layout: when the live pages container has the horizontal
@@ -126,6 +132,13 @@ body {
    pages only. This preserves the original landing layout. */
 #landing-page #sidebar { display: none; }
 
+#landing-page header {
+    /* center branding and tagline on the landing page while keeping
+       header-controls (theme toggle) positioned at the top-right. */
+    text-align: center;
+    padding-bottom: 0.5rem;
+}
+
 #landing-page h1 {
     font-size: 3rem;
     font-weight: 700;
@@ -136,6 +149,7 @@ body {
 .tagline {
     font-size: 1.25rem;
     color: var(--text-secondary);
+    margin-top: 0.25rem;
 }
 
 /* Brand heading: align clef icon with title */
