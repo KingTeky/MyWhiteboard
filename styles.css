@@ -107,6 +107,11 @@ body {
     padding-top: 4rem;
 }
 
+/* Hide the sidebar on the landing page to avoid an extra frame appearing
+   under the action cards. The sidebar is intended for the viewer/editor
+   pages only. This preserves the original landing layout. */
+#landing-page #sidebar { display: none; }
+
 #landing-page h1 {
     font-size: 3rem;
     font-weight: 700;
@@ -236,6 +241,16 @@ body {
    icons unchanged. SVGs use stroke="currentColor" already in markup. */
 .theme-toggle {
     color: var(--toggle-icon-color);
+    /* Ensure theme-toggle buttons visually match other icon buttons
+       in case markup or JS replaces inner SVGs. Keep compact sizing
+       and the same background/border as .btn-icon. */
+    padding: 0.5rem;
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .theme-toggle svg {
@@ -243,6 +258,8 @@ body {
     /* ensure strokes pick up the current color */
     stroke: currentColor;
     fill: none;
+    width: 20px;
+    height: 20px;
 }
 
 /* Input Group */
@@ -478,7 +495,8 @@ header .theme-toggle,
 .view {
     display: none;
     flex: 1;
-    overflow: auto;
+    /* Prevent the whole view from scrolling; internal areas manage their own scrolling */
+    overflow: hidden;
 }
 
 .view.active {
@@ -502,8 +520,170 @@ header .theme-toggle,
 .live-container {
     display: flex;
     gap: 16px;
-    height: 100%;
+    /* make the live container fill the available viewer height so child
+       areas (pages + docks) can manage their own scrolling reliably */
+    height: calc(100vh - 96px);
     align-items: stretch;
+}
+
+/* Ensure the pages wrapper grows to fill available space so the
+   scrollable chart area has enough room; otherwise the wrapper can
+   shrink and make the live-pages area very small. */
+.live-pages-wrapper {
+    flex: 1 1 auto;
+    min-width: 0; /* allow children to shrink properly inside flex */
+    min-height: 0;
+}
+
+/* Right column containing modules (chat, thumbs). Provide an initial
+   width and allow JS to override via inline flex when resizing. */
+.live-right {
+     /* Use fixed base width that JS can adjust; don't create an inner
+         scroll area here — modules should be free-flowing and the pages
+         area handles the main scroll. Use CSS Grid so DOM order maps to
+         rows/columns (allows above/below placement regardless of dock width). */
+    /* increase default width so multiple columns can fit by default */
+    flex: 0 0 460px;
+    max-width: 920px;
+     overflow: visible; /* allow modules to sit freely without being clipped */
+     padding: 8px 12px;
+     box-sizing: border-box;
+    display: grid;
+    /* smaller min column so modules can appear side-by-side even when dock
+       is moderately sized. auto-fit lets columns wrap to available space. */
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+     grid-auto-rows: min-content;
+     gap: 12px;
+    align-content: start;
+    justify-items: stretch;
+}
+
+/* Stronger layout guarantees for right dock children so modules can sit
+   side-by-side: ensure modules don't span full-width and respect grid
+   column sizing. This override helps when other rules force 100% width. */
+.live-right > .live-module {
+    min-width: 120px;
+    max-width: none;
+    width: auto !important;
+    align-self: start;
+}
+
+/* Make the right column independent from the left scroll: sticky so it
+   stays visible while the pages area scrolls. The height is bounded to
+   allow internal scrolling for chat and thumbnails. */
+.live-right {
+    position: sticky;
+    top: 76px; /* below the page header */
+    align-self: flex-start;
+    /* let content flow; avoid internal max-height to prevent internal scrolling */
+    max-height: none;
+}
+
+/* Left dock (initially empty). When modules moved here it behaves like the right dock */
+.live-dock-left {
+    flex: 0 0 320px;
+    max-width: 520px;
+    overflow: visible;
+    padding: 12px;
+    border-right: 1px solid rgba(0,0,0,0.06);
+    background: var(--thumb-bg, #fafafa);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.live-module-dock { display: flex; flex-direction: column; gap: 12px; }
+
+/* When a dock is the right live dock, prefer grid layout so modules
+   can sit side-by-side. This selector is more specific than the generic
+   .live-module-dock and forces grid for the right dock. */
+aside.live-right.live-module-dock,
+.live-right.live-module-dock {
+    display: grid !important;
+}
+
+/* Module content layout: make the thumbnails module render as a responsive
+   grid of thumbnails (2-4 columns depending on width). Chat module remains
+   a stacked column above/below thumbnails and can be reordered via drag.
+*/
+.module-content.live-thumbs,
+.live-right .module-content.live-thumbs,
+.live-dock-left .module-content.live-thumbs {
+     /* Force thumbnails inside docks to render as a responsive grid.
+         Use a smaller min width so 2-4 columns appear depending on dock width. */
+    display: grid !important;
+    /* make thumbnails smaller by default (about 40% smaller than previous 200px-ish defaults) */
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)) !important;
+    gap: 12px !important;
+    align-items: start;
+}
+
+/* Ensure the thumbnail grid flows into multiple columns and keeps items
+   compact. Make each thumbnail content cell allow multiple columns. */
+.module-content.live-thumbs {
+    grid-auto-rows: min-content !important;
+    grid-auto-flow: row dense !important;
+}
+
+.module-content.live-thumbs .live-thumb {
+    width: auto !important;
+    display: block !important;
+}
+
+/* Aggressive override: force thumbnails module to be a compact grid inside
+   the right dock and reduce thumbnail size so multiple columns appear.
+   Use high specificity and !important to beat any legacy rules. */
+.live-right #live-thumbs-module .module-content,
+.live-right .module-content.live-thumbs {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)) !important;
+    gap: 10px !important;
+    padding: 8px !important;
+    align-items: start !important;
+}
+
+.live-right #live-thumbs-module .module-content .live-thumb,
+.live-right .module-content.live-thumbs .live-thumb {
+    padding: 6px !important;
+    border-radius: 6px !important;
+    width: auto !important;
+    max-width: 120px !important;
+}
+
+/* Reduce internal canvas/img size so thumbnails don't stretch full width */
+.live-right .live-thumb img, .live-right .live-thumb canvas {
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+}
+
+/* Prevent the later generic .live-thumbs rule from forcing an unwanted
+   scrollbar on module instances (module-content.live-thumbs). These
+   elements are intended to be free-flowing grids inside a dock. */
+.module-content.live-thumbs {
+    overflow: visible !important;
+    max-height: none !important;
+}
+
+.module-content.live-thumbs .live-thumb {
+    display: block;
+    padding: 8px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    /* ensure thumbnail items stretch to fill each grid cell and do not
+       collapse to narrow vertical blocks */
+    width: 100%;
+}
+
+/* Ensure chat module content scrolls independently inside the right column */
+.module-content .chat-messages {
+    /* Make chat messages scroll within the module content area and
+       use available vertical space inside the dock. The module-content
+       element is inside a dock with max-height set, so chat will scroll.
+       Use a calc so the input row remains visible. */
+    max-height: calc(100vh - 260px);
+    overflow-y: auto;
 }
 
 /* Splitter between pages and thumbnails for adjustable sizing */
@@ -540,20 +720,60 @@ header .theme-toggle,
     min-height: 0; /* important for flex children to allow internal scrolling */
     -webkit-overflow-scrolling: touch;
     padding: 12px;
+    /* Ensure the pages area actually fills its parent's height so overflow
+       produces a scrollbar. This guards against missing scrollbars when the
+       flex parent's height is constrained. */
+    height: 100%;
 }
 
 /* Navigation thumbnails: fixed-width column with its own scrollbar */
 .live-thumbs {
-    flex: 0 0 180px; /* adjust width as desired */
+    /* The legacy .live-thumbs selector previously acted as a sidebar
+       column. Thumbnails rendered inside module content should use the
+       grid rules above; keep this rule but make it non-intrusive for
+       module-content instances. */
+    flex: 0 0 180px;
     max-width: 220px;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
     border-left: 1px solid rgba(0,0,0,0.06);
     padding: 12px;
     background: var(--thumb-bg, #fafafa);
-    /* ensure absolute-positioned badges inside can position correctly */
     position: relative;
 }
+
+/* Make each module visually separate and prevent them from overlapping
+   the live pages. Modules should be normal flow block elements inside docks. */
+.live-module {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0;
+    margin: 0; /* spacing is handled by dock gap */
+    display: block;
+    position: relative;
+    z-index: 10;
+    /* Let modules size to their grid cell naturally; avoid forcing full
+       width which prevents side-by-side placement when columns are narrower. */
+    width: auto;
+    box-sizing: border-box;
+}
+
+.live-module .module-header { cursor: grab; }
+
+/* Modules should take full width in narrow docks/mobile */
+@media (max-width: 980px) {
+    .live-right .live-module,
+    .live-dock-left .live-module { width: 100%; min-width: 0; }
+}
+
+/* Visual for ghost element while dragging */
+.sortable-ghost {
+    opacity: 0.6 !important;
+    transform: scale(0.98);
+    box-shadow: 0 8px 26px rgba(0,0,0,0.12);
+}
+.sortable-chosen { outline: 2px dashed rgba(37,99,235,0.16); }
 
 /* Allow thumbs column to be resized by JS changing inline flex-basis/width */
 .live-thumbs[aria-resizable="true"] { transition: none; }
@@ -610,7 +830,7 @@ header .theme-toggle,
     display: block;
     margin-bottom: 8px;
     cursor: pointer;
-    padding: 6px;
+    padding: 4px;
     border-radius: 6px;
     background: transparent;
 }
@@ -969,3 +1189,187 @@ header .theme-toggle,
     opacity: 0.6;
     pointer-events: none;
 }
+
+/* Sidebar (per-page thumbnails) styles */
+#sidebar {
+    display: block;
+    width: 260px;
+    max-width: 34%;
+    min-width: 160px;
+    border-left: 1px solid var(--border);
+    background: var(--card-background);
+    padding: 12px;
+    box-shadow: var(--shadow-sm);
+}
+
+#sidebar-thumbs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: auto;
+    max-height: calc(100vh - 140px);
+    -webkit-overflow-scrolling: touch;
+}
+
+.sidebar-thumb {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 180ms ease, transform 120ms ease;
+    border: 1px solid transparent;
+}
+.sidebar-thumb:hover {
+    background: var(--hover);
+}
+
+.sidebar-thumb-img {
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 6px;
+    background: var(--surface);
+}
+.sidebar-thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-placeholder { color: var(--text-secondary); font-size: 0.85rem; padding: 6px; text-align: center; }
+
+.sidebar-thumb-label { font-size: 0.85rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Flash animation when a thumbnail updates remotely */
+/* Softer flash animation: shorter duration and subtler shadow/translate */
+.sidebar-thumb.flash {
+    animation: thumb-flash 800ms ease-in-out;
+}
+@keyframes thumb-flash {
+    0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.0); transform: translateY(0); }
+    20% { box-shadow: 0 4px 10px rgba(37,99,235,0.14); transform: translateY(-2px); }
+    60% { box-shadow: 0 6px 18px rgba(37,99,235,0.08); transform: translateY(0); }
+    100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.0); transform: translateY(0); }
+}
+
+/* small changed badge overlay on thumbnail (optional) */
+.sidebar-thumb .thumb-changed-badge {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    background: var(--primary-color);
+    color: #fff;
+    font-size: 0.7rem;
+    padding: 3px 6px;
+    border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 180ms ease, transform 180ms ease;
+}
+.sidebar-thumb.flash .thumb-changed-badge { opacity: 1; transform: translateY(0); }
+
+/* Apply consistent thumbnail styling to live-mode thumbnails */
+.live-thumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 180ms ease, transform 120ms ease;
+    border: 1px solid transparent;
+    position: relative;
+}
+.live-thumb:hover { background: var(--hover); }
+.live-thumb img { width: 100%; height: auto; border-radius: 6px; display: block; }
+.live-thumb .thumb-changed-badge { position: absolute; right: 8px; top: 8px; background: var(--primary-color); color: #fff; font-size: 0.7rem; padding: 3px 6px; border-radius: 999px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); opacity: 0; transform: translateY(-4px); transition: opacity 180ms ease, transform 180ms ease; }
+.live-thumb.flash { animation: thumb-flash 800ms ease-in-out; }
+.live-thumb.flash .thumb-changed-badge { opacity: 1; transform: translateY(0); }
+
+/* Sidebar module container and module-specific styling (plugin modules) */
+.sidebar-module {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.sidebar-module + .sidebar-module { margin-top: 8px; }
+.module-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    font-weight: 700;
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+    cursor: grab;
+}
+.module-header:focus { outline: 2px solid rgba(37,99,235,0.12); }
+.module-content {
+    padding: 8px 10px;
+}
+.module-collapse-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+.module-collapse-btn:hover { background: var(--hover); }
+.sidebar-module.collapsed .module-content { display: none; }
+
+/* Chat module specific styling */
+.chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 6px;
+}
+.chat-msg {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    background: rgba(0,0,0,0.03);
+    padding: 8px 10px;
+    border-radius: 8px;
+    word-break: break-word;
+}
+.chat-msg.own {
+    background: rgba(37,99,235,0.08);
+    align-self: flex-end;
+}
+.chat-meta { font-weight: 700; }
+.chat-input {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+}
+.chat-input-field {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    outline: none;
+}
+.chat-input-field:focus { border-color: var(--primary-color); }
+
+/* Ensure sidebar modules look good on small screens */
+@media (max-width: 920px) {
+    #sidebar { width: 220px; }
+    .sidebar-module { border-radius: 8px; }
+}
+
+/* Role-specific message colors */
+.chat-msg.role-pastor { border-left: 4px solid #f97316; background: rgba(249,115,22,0.06); }
+.chat-msg.role-worship-leader { border-left: 4px solid #60a5fa; background: rgba(96,165,250,0.05); }
+.chat-msg.role-production { border-left: 4px solid #a78bfa; background: rgba(167,139,250,0.05); }
+.chat-msg.role-musician { border-left: 4px solid #34d399; background: rgba(52,211,153,0.05); }
+
+.chat-msg .chat-body { font-size: 0.95rem; color: var(--text-primary); }
+.chat-msg .chat-meta { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }

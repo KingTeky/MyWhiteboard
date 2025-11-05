@@ -4,7 +4,64 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Music Whiteboard - Music Chart Manager</title>
+    <link rel="icon" href="bassclef.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
+    <script>
+        // Defensive inline implementations so buttons respond even if app.js
+        // hasn't finished initializing. When the real functions load they
+        // will replace these.
+        (function(){
+            function genCode() {
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+                let code = '';
+                for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+                return code;
+            }
+
+            window.createSession = window.createSession || function() {
+                console.log('inline createSession called');
+                try {
+                    if (!window.AppState) window.AppState = {};
+                    if (!window.AppState.sessionCode) {
+                        window.AppState.sessionCode = genCode();
+                        window.AppState.isDirector = true;
+                        try { localStorage.setItem(`session_${window.AppState.sessionCode}_directorToken`, 'local'); } catch (e) {}
+                        try { localStorage.setItem('currentSession', JSON.stringify({ code: window.AppState.sessionCode, isDirector: true, charts: [] })); } catch (e) {}
+                    }
+                    // Prefer app-level navigation when available
+                    if (typeof showPage === 'function') {
+                        try { showPage('upload'); } catch (e) {}
+                    } else {
+                        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                        const up = document.getElementById('upload-page'); if (up) up.classList.add('active');
+                    }
+                    const uploadCodeEl = document.getElementById('session-code-display'); if (uploadCodeEl) uploadCodeEl.textContent = window.AppState.sessionCode;
+                    const viewerCodeTextEl = document.getElementById('viewer-session-code-text'); if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${window.AppState.sessionCode}`;
+                    try { if (typeof updateRoleUI === 'function') updateRoleUI(); } catch (e) {}
+                } catch (e) { console.warn('inline createSession failed', e); }
+            };
+
+            window.joinSession = window.joinSession || function() {
+                try {
+                    const input = document.getElementById('session-code-input');
+                    if (!input) { alert('No session input found'); return; }
+                    const code = (input.value || '').trim().toUpperCase();
+                    if (code.length !== 6) { alert('Please enter a valid 6-character session code'); return; }
+                    if (!window.AppState) window.AppState = {};
+                    window.AppState.sessionCode = code;
+                    window.AppState.isDirector = !!localStorage.getItem(`session_${code}_directorToken`);
+                    if (typeof showPage === 'function') {
+                        try { showPage('viewer'); } catch (e) {}
+                        try { if (typeof switchToMode === 'function') switchToMode('live'); } catch (e) {}
+                    } else {
+                        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                        const vp = document.getElementById('viewer-page'); if (vp) vp.classList.add('active');
+                    }
+                    const viewerCodeTextEl = document.getElementById('viewer-session-code-text'); if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${code}`;
+                } catch (e) { console.warn('inline joinSession failed', e); }
+            };
+        })();
+    </script>
 </head>
 <body>
     <div id="app">
@@ -28,7 +85,7 @@
                     <div class="card">
                         <h2>Music Director</h2>
                         <p>Create a new session and upload music charts</p>
-                        <button id="create-session-btn" class="btn btn-primary">Create Session</button>
+                        <button id="create-session-btn" class="btn btn-primary" onclick="createSession()">Create Session</button>
                     </div>
                     
                     <div class="card">
@@ -36,10 +93,15 @@
                         <p>Join an existing session with a code</p>
                         <div class="input-group">
                             <input type="text" id="session-code-input" placeholder="Enter session code" maxlength="6">
-                            <button id="join-session-btn" class="btn btn-secondary">Join Session</button>
+                            <button id="join-session-btn" class="btn btn-secondary" onclick="joinSession()">Join Session</button>
                         </div>
                     </div>
                 </div>
+
+                <!-- Sidebar: thumbnails (per-page) -->
+                <aside id="sidebar" class="sidebar" aria-label="Page thumbnails">
+                    <div id="sidebar-thumbs" class="sidebar-thumbs"></div>
+                </aside>
             </div>
         </div>
 
@@ -121,6 +183,12 @@
                                 <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
                             </svg>
                         </button>
+                        <!-- Annotation toolbar (per-page tools) -->
+                        <div id="annotation-toolbar" class="annotation-toolbar" hidden>
+                            <input type="color" id="annotation-color" title="Annotation color" value="#ef4444">
+                            <button id="annotation-undo" class="btn btn-icon" title="Undo last stroke" aria-label="Undo">⟲</button>
+                            <button id="annotation-clear" class="btn btn-icon" title="Clear page annotations" aria-label="Clear">✖</button>
+                        </div>
                         <button id="leave-session-btn" class="btn btn-secondary">Leave</button>
                         <!-- session code and copy button placed to the left of the theme toggle -->
                         <div class="viewer-session-code" id="viewer-session-code" aria-live="polite">
@@ -169,9 +237,26 @@
                 <!-- Live Mode View: attendee-facing continuous scroll with thumbnails -->
                 <div id="live-view" class="view">
                     <div class="live-container">
-                        <div id="live-pages" class="live-pages"></div>
-                        <div id="live-thumbs" class="live-thumbs"></div>
-                    </div>
+                            <!-- left dock for movable modules (can accept chat/thumbs) -->
+                            <aside class="live-dock-left live-module-dock" aria-label="Module dock left"></aside>
+
+                            <div class="live-pages-wrapper">
+                                <div id="live-pages" class="live-pages"></div>
+                            </div>
+
+                            <div id="live-splitter" class="live-splitter" aria-hidden="true"></div>
+
+                            <aside class="live-right live-module-dock" aria-label="Module dock right">
+                                <div id="live-chat-module" class="live-module">
+                                    <div class="module-header">Chat</div>
+                                    <div class="module-content"></div>
+                                </div>
+                                <div id="live-thumbs-module" class="live-module thumbs-module">
+                                    <div class="module-header">Thumbnails</div>
+                                    <div class="module-content live-thumbs"></div>
+                                </div>
+                            </aside>
+                        </div>
                 </div>
 
                 <!-- Organize Mode View -->
@@ -186,6 +271,7 @@
     <!-- PDF.js for thumbnail generation and SortableJS for touch-friendly drag/reorder -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <script src="pageManager.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

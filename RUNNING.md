@@ -32,6 +32,57 @@ npm --version
 If you prefer not to install Node, you can serve the client using Python's static server. The server-backed features will not be available.
 
 ---
+
+## Windows (PowerShell) — quick commands
+
+If you're on Windows and using PowerShell / pwsh, here are equivalent commands and tips to run the server and serve the client.
+
+Prerequisite: install Node.js (LTS) if you want to run the optional server.
+
+Recommended: install Node via winget (Windows 10/11):
+
+```powershell
+# Install Node.js LTS via winget
+winget install OpenJS.NodeJS.LTS
+
+# Verify
+node --version
+npm --version
+```
+
+Start the minimal server (optional):
+
+```powershell
+# from the repository root
+Set-Location .\server
+npm install
+npm start
+```
+
+- Server listens on http://localhost:3000 by default.
+
+Serve the client (static files) using PowerShell-friendly commands:
+
+Option A — Python 3 (if installed):
+
+```powershell
+# from repo root
+python -m http.server 8080
+# open http://localhost:8080 in your browser
+```
+
+Option B — Node static server (no install required beyond npm):
+
+```powershell
+npx http-server -p 8080 .
+# open http://localhost:8080
+```
+
+Notes:
+- If using the optional server, the client will attempt to contact it at http://localhost:3000. You can override that by setting `window.SERVER_BASE` in the browser console or by editing `app.js` during development.
+- PowerShell may block scripts or services if execution policy is restricted — you can run `Get-ExecutionPolicy` to inspect and `Set-ExecutionPolicy` if you understand the security implications.
+
+---
 ## Start the minimal server (optional)
 
 From the repository root:

@@ -11,6 +11,63 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.resolve(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'sessions.json');
 
+const CHAT_DEBUG_LOG = path.join(DATA_DIR, 'chat_debug.log');
+
+function appendChatDebug(line) {
+  try {
+    const ts = new Date().toISOString();
+    fs.appendFileSync(CHAT_DEBUG_LOG, `[${ts}] ${line}\n`, 'utf8');
+  } catch (e) {
+    try { console.warn('failed to write chat debug log', e); } catch (e) {}
+  }
+}
+
+// Pages payload validation limits (can be overridden via env vars)
+const PAGES_MAX_COUNT = parseInt(process.env.PAGES_MAX_COUNT || '1000', 10); // max number of page objects
+const PAGES_MAX_TOTAL_BYTES = parseInt(process.env.PAGES_MAX_TOTAL_BYTES || '4000000', 10); // ~4 MB total JSON size
+const PAGES_MAX_PER_PAGE_BYTES = parseInt(process.env.PAGES_MAX_PER_PAGE_BYTES || '500000', 10); // ~500 KB per page
+
+/**
+ * Validate a pages payload object.
+ * Returns { ok: true } when valid, otherwise { ok: false, message, status }
+ */
+function validatePagesPayload(pages) {
+  if (!pages || typeof pages !== 'object' || Array.isArray(pages)) {
+    return { ok: false, message: 'invalid pages payload (expected object)', status: 400 };
+  }
+  const pageKeys = Object.keys(pages);
+  if (pageKeys.length > PAGES_MAX_COUNT) {
+    return { ok: false, message: `pages count ${pageKeys.length} exceeds limit ${PAGES_MAX_COUNT}` };
+  }
+
+  // Check total serialized size
+  let totalJson;
+  try {
+    totalJson = JSON.stringify(pages);
+  } catch (e) {
+    return { ok: false, message: 'unable to stringify pages payload', status: 400 };
+  }
+  const totalBytes = Buffer.byteLength(totalJson, 'utf8');
+  if (totalBytes > PAGES_MAX_TOTAL_BYTES) {
+    return { ok: false, message: `pages payload too large (${totalBytes} bytes) > ${PAGES_MAX_TOTAL_BYTES}` };
+  }
+
+  // Per-page size check (stringify each page object)
+  for (const k of pageKeys) {
+    try {
+      const pj = JSON.stringify(pages[k]);
+      const pb = Buffer.byteLength(pj, 'utf8');
+      if (pb > PAGES_MAX_PER_PAGE_BYTES) {
+        return { ok: false, message: `page ${k} payload too large (${pb} bytes) > ${PAGES_MAX_PER_PAGE_BYTES}` };
+      }
+    } catch (e) {
+      return { ok: false, message: `invalid page object for key ${k}`, status: 400 };
+    }
+  }
+
+  return { ok: true };
+}
+
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
@@ -52,10 +109,81 @@ wss.on('connection', (ws, req) => {
         const code = (j.session || '').toString().toUpperCase();
         ws.session = code;
         if (!sessionClients.has(code)) sessionClients.set(code, new Set());
-        sessionClients.get(code).add(ws);
+  sessionClients.get(code).add(ws);
+  try { console.log(`WS subscribe: client added to session ${code} (clients=${sessionClients.get(code).size})`); } catch (e) {}
+  try { appendChatDebug(`subscribe session=${code} clients=${sessionClients.get(code).size} pid=${process.pid}`); } catch (e) {}
         // mark activity when a client subscribes and (re)schedule inactivity cleanup
         try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
       }
+      // Allow clients to push single-page updates which will be broadcast to session members
+      if (j && j.type === 'page:update' && j.session && j.pageId && j.page && typeof j.page === 'object') {
+        const code = (j.session || '').toString().toUpperCase();
+        if (!store[code]) {
+          // ignore updates for unknown sessions
+          return;
+        }
+        // per-page size validation
+        try {
+          const pj = JSON.stringify(j.page);
+          const pb = Buffer.byteLength(pj, 'utf8');
+          if (pb > PAGES_MAX_PER_PAGE_BYTES) {
+            try { ws.send(JSON.stringify({ type: 'error', message: `page ${j.pageId} payload too large` })); } catch (e) {}
+            return;
+          }
+        } catch (e) {
+          return; // invalid page object
+        }
+
+        // ensure pages map exists
+        store[code].pages = store[code].pages || {};
+        // merge/update page entry; keep provided fields
+        store[code].pages[j.pageId] = Object.assign({}, store[code].pages[j.pageId] || {}, j.page);
+        try { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } catch (e) {}
+
+        // broadcast single-page update to clients
+        const payload = JSON.stringify({ type: 'page:update', pageId: j.pageId, page: store[code].pages[j.pageId] });
+        const clients = sessionClients.get(code) || new Set();
+        clients.forEach(c => { try { c.send(payload); } catch (e) {} });
+        return;
+      }
+
+        // Allow chat messages from clients: { type: 'chat:message', session, from, role, text }
+        if (j && j.type === 'chat:message' && j.session && typeof j.text === 'string') {
+          const code = (j.session || '').toString().toUpperCase();
+          if (!store[code]) {
+            // unknown session - ignore
+            return;
+          }
+
+    try { console.log(`Received chat: session=${code} from=${j.from || 'anonymous'} role=${j.role || ''} text=${(j.text||'').slice(0,80)}`); } catch (e) {}
+    try { appendChatDebug(`recv session=${code} from=${j.from||'anon'} role=${j.role||''} text=${(j.text||'').replace(/\n/g,' ').slice(0,200)}`); } catch (e) {}
+
+          // basic validation and sanitization
+          const text = String(j.text).substring(0, 2000); // cap length
+          const from = j.from ? String(j.from).substring(0, 128) : 'anonymous';
+          const role = j.role ? String(j.role).substring(0, 48) : '';
+
+          const msgObj = { id: `${Date.now()}_${Math.random().toString(36).substr(2,6)}`, from, role, text, at: Date.now() };
+          // preserve a temporary client-side id when provided so clients can reconcile
+          if (j.clientTempId) {
+            try { msgObj.clientTempId = String(j.clientTempId).substring(0, 128); } catch (e) {}
+          }
+
+          // append to in-memory session chat history (keep last 200)
+          store[code].chat = Array.isArray(store[code].chat) ? store[code].chat : [];
+          store[code].chat.push(msgObj);
+          if (store[code].chat.length > 200) store[code].chat = store[code].chat.slice(-200);
+
+          try { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } catch (e) {}
+
+          // broadcast chat message to session clients
+          const cpayload = JSON.stringify({ type: 'chat:message', message: msgObj });
+          const cclients = sessionClients.get(code) || new Set();
+    try { console.log(`Broadcasting chat message to ${cclients.size} clients in session ${code}`); } catch (e) {}
+    try { appendChatDebug(`broadcast session=${code} targets=${cclients.size} msgid=${msgObj.id}`); } catch (e) {}
+    cclients.forEach(c => { try { c.send(cpayload); } catch (e) { console.warn('failed to send chat to client', e); appendChatDebug(`send_err session=${code} err=${e.message||e}`); } });
+          return;
+        }
     } catch (e) {
       // ignore malformed
     }
@@ -65,10 +193,10 @@ wss.on('connection', (ws, req) => {
     if (ws.session && sessionClients.has(ws.session)) {
       const code = ws.session;
       sessionClients.get(code).delete(ws);
+      // if no clients remain, don't delete immediately; schedule cleanup instead
       if (sessionClients.get(code).size === 0) {
-        sessionClients.delete(code);
-        // No connected clients -> delete session immediately (per updated policy)
-        try { deleteSession(code); } catch (e) {}
+        try { sessionClients.delete(code); } catch (e) {}
+        try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
       }
     }
   });
@@ -93,18 +221,21 @@ function scheduleInactivityCleanup(code) {
     const DELAY_MS = 75 * 60 * 1000; // 75 minutes
 
     const clients = sessionClients.get(code) || new Set();
-    // If no connected clients, remove immediately per new policy
+    // If no connected clients, schedule deletion after inactivity window instead
     if (clients.size === 0) {
-      deleteSession(code);
+      // schedule a delayed deletion (DELAY_MS) to allow short disconnects and
+      // to keep chat history available briefly for new joiners.
+      if (cleanupTimers.has(code)) { clearTimeout(cleanupTimers.get(code)); cleanupTimers.delete(code); }
+      const tid0 = setTimeout(() => { try { deleteSession(code); } catch (e) {} ; if (cleanupTimers.has(code)) cleanupTimers.delete(code); }, DELAY_MS);
+      cleanupTimers.set(code, tid0);
       return;
     }
 
-    // If there are connected clients but no charts, delete immediately
+    // If there are connected clients but no charts, do NOT delete immediately.
+    // Keep the session while clients are connected so live features (chat, page updates)
+    // continue to function even before charts are added. We'll only delete when
+    // clients are gone or after the inactivity timeout below.
     const hasCharts = Array.isArray(store[code].charts) && store[code].charts.length > 0;
-    if (!hasCharts) {
-      deleteSession(code);
-      return;
-    }
 
     // Otherwise, schedule inactivity timeout. Reset any existing timer.
     if (cleanupTimers.has(code)) { clearTimeout(cleanupTimers.get(code)); cleanupTimers.delete(code); }
@@ -174,7 +305,7 @@ function persist() {
 function broadcastSessionUpdate(code) {
   try {
     const clients = sessionClients.get(code) || new Set();
-    const payload = JSON.stringify({ type: 'charts:update', charts: (store[code] && store[code].charts) || [] });
+    const payload = JSON.stringify({ type: 'charts:update', charts: (store[code] && store[code].charts) || [], pages: (store[code] && store[code].pages) || {} });
     clients.forEach(ws => {
       try { ws.send(payload); } catch (e) {}
     });
@@ -196,10 +327,22 @@ function generateToken() {
 app.post('/api/sessions', (req, res) => {
   const code = generateCode();
   const directorToken = generateToken();
-  const session = { code, directorToken, charts: [], lastActivity: Date.now() };
+  const session = { code, directorToken, charts: [], chat: [], lastActivity: Date.now() };
   store[code] = session;
   persist();
   res.json({ code, directorToken });
+});
+
+// Get recent chat messages for a session (optional ?limit=N)
+app.get('/api/sessions/:code/chat', (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const s = store[code];
+  if (!s) return res.status(404).json({ error: 'not_found' });
+  const limit = parseInt(req.query.limit || '200', 10);
+  const chat = Array.isArray(s.chat) ? s.chat.slice(-limit) : [];
+  // mark activity
+  try { s.lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } catch (e) {}
+  res.json({ chat });
 });
 
 // Get session metadata (no token in response)
@@ -223,6 +366,20 @@ app.post('/api/sessions/:code/charts', (req, res) => {
 
   const charts = Array.isArray(req.body.charts) ? req.body.charts : [];
   s.charts = charts;
+  // accept charts and optionally pages
+  if (req.body && Array.isArray(req.body.charts)) {
+    s.charts = req.body.charts;
+  }
+  if (req.body && req.body.pages && typeof req.body.pages === 'object') {
+    // Validate pages payload size and structure to avoid extremely large posts
+    const pages = req.body.pages;
+    const validation = validatePagesPayload(pages);
+    if (!validation.ok) {
+      // 413 Payload Too Large is appropriate for size limits
+      return res.status(validation.status || 413).json({ error: validation.message });
+    }
+    s.pages = pages;
+  }
   // update last activity and (re)schedule inactivity cleanup
   try { s.lastActivity = Date.now(); scheduleInactivityCleanup(code); } catch (e) {}
   store[code] = s;
@@ -239,7 +396,7 @@ app.get('/api/sessions/:code/charts', (req, res) => {
   if (!s) return res.status(404).json({ error: 'not_found' });
   // treat chart fetch as activity
   try { s.lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } catch (e) {}
-  res.json({ charts: s.charts || [] });
+  res.json({ charts: s.charts || [], pages: s.pages || {} });
 });
 
 server.listen(PORT, () => {

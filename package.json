@@ -6,7 +6,9 @@
     "start:server": "node server/index.js",
     "serve-client": "npx http-server -p 8080 .",
     "dev": "concurrently \"npm:serve-client\" \"npm:start:server\"",
-    "start": "npm run dev"
+    "start": "npm run dev",
+    "test": "node server/test_pageManager.js",
+    "test:integration": "node server/test_save_with_pages.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.0"

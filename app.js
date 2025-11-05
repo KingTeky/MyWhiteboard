@@ -6,11 +6,44 @@ const ANNOTATION_CONFIG = {
     lineJoin: 'round'
 };
 
-// Utility function to escape HTML
+// Do not register chat in the sidebar here; chat will be rendered into Live mode's chat module
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// small visual flash on a sidebar thumb when its content changes
+function flashThumb(pageId) {
+    try {
+        const container = document.getElementById('sidebar-thumbs');
+        if (!container) return;
+        const el = container.querySelector(`.sidebar-thumb[data-page-id="${pageId}"]`);
+        if (!el) return;
+        // restart animation
+        el.classList.remove('flash');
+        // force reflow to restart CSS animation
+        // eslint-disable-next-line no-unused-expressions
+        void el.offsetWidth;
+        el.classList.add('flash');
+        setTimeout(() => { try { el.classList.remove('flash'); } catch (e) {} }, 900);
+        // also try to flash any live-mode thumbnail that corresponds to the same chart
+        try {
+            if (window._pageManager) {
+                const p = window._pageManager.getPage(pageId);
+                if (p && p.chartId) {
+                    const liveEl = document.querySelector(`.live-thumb[data-chart-id="${p.chartId}"]`);
+                    if (liveEl) {
+                        liveEl.style.position = liveEl.style.position || 'relative';
+                        let lb = liveEl.querySelector('.thumb-changed-badge');
+                        if (!lb) { lb = document.createElement('div'); lb.className = 'thumb-changed-badge'; lb.textContent = 'Updated'; liveEl.appendChild(lb); }
+                        liveEl.classList.remove('flash'); void liveEl.offsetWidth; liveEl.classList.add('flash');
+                        setTimeout(() => { try { liveEl.classList.remove('flash'); } catch (e) {} }, 900);
+                    }
+                }
+            }
+        } catch (e) {}
+    } catch (e) {}
 }
 
 // Application State
@@ -25,6 +58,7 @@ const AppState = {
     viewMode: 'edit',
     annotationMode: false,
     annotations: {},
+    currentStroke: null,
     canvas: null,
     context: null,
     annotationCanvas: null,
@@ -33,6 +67,8 @@ const AppState = {
     lastX: 0,
     lastY: 0
 };
+// per-page undo stacks for PageManager-based annotations
+AppState.pageUndoStacks = {};
 
 // Live mode polling config
 const LIVE_POLL_INTERVAL_MS = 3000; // 3s poll interval for chart updates
@@ -50,6 +86,10 @@ const SERVER_BASE = (function(){
     return 'http://localhost:3000';
 })();
 
+// Feature flags (can be set on window before scripts load)
+// Set window.FEATURE_PAGE_MANAGER = false to disable PageManager usage.
+const FEATURE_PAGE_MANAGER = (typeof window !== 'undefined' && typeof window.FEATURE_PAGE_MANAGER !== 'undefined') ? Boolean(window.FEATURE_PAGE_MANAGER) : true;
+
 // Session Management
 function generateSessionCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -63,6 +103,7 @@ function generateSessionCode() {
 }
 
 function createSession() {
+    console.log('createSession() called');
     // Try to create session server-side; fallback to client-only session if unavailable
     (async () => {
         try {
@@ -365,13 +406,30 @@ function renderCurrentChart() {
 function renderLiveMode() {
     // Render all charts in order as a continuous scroll; thumbnails represent each page across charts.
     const pagesContainer = document.getElementById('live-pages');
-    const thumbsContainer = document.getElementById('live-thumbs');
+    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs');
     if (!pagesContainer || !thumbsContainer) return;
     pagesContainer.innerHTML = '';
     thumbsContainer.innerHTML = '';
 
     if (!window['pdfjsLib']) return;
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    // If PageManager is available, ensure charts have pageMap (split PDFs) created asynchronously
+    try {
+        if (window._pageManager) {
+            AppState.charts.forEach(chart => {
+                if (chart && !Array.isArray(chart.pageMap) && chart.data) {
+                    // create pages in background; when done PageManager will emit pages:created
+                    window._pageManager.createPagesFromPdf(chart).catch(() => {});
+                }
+            });
+            // re-render when pages are created so we can pick up thumbnails/annotations
+            window._pageManager.on('pages:created', function () {
+                // small delay to allow per-page thumbs to populate
+                setTimeout(() => { try { renderLiveMode(); } catch (e) {} }, 120);
+            });
+        }
+    } catch (e) {}
 
     // Create placeholders for all charts to keep ordering stable
     AppState.charts.forEach((chart, chartIdx) => {
@@ -402,16 +460,25 @@ function renderLiveMode() {
         });
         thumbsContainer.appendChild(thumbPlaceholder);
 
-        // generate or reuse a cached thumbnail for this chart (use helper)
-        if (chart.thumb) {
-            try { const img = new Image(); img.src = chart.thumb; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
-        } else if (chart.data) {
-            generateThumbnail(chart, 140).then(dataUrl => {
-                if (dataUrl) {
-                    chart.thumb = dataUrl; // cache on chart
-                    try { const img = new Image(); img.src = dataUrl; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
-                }
-            });
+        // Prefer per-page thumbnail if PageManager has it (first page)
+        if (window._pageManager && Array.isArray(chart.pageMap) && chart.pageMap.length > 0) {
+            const firstPage = window._pageManager.getPage(chart.pageMap[0]);
+            if (firstPage && firstPage.thumb) {
+                try { const img = new Image(); img.src = firstPage.thumb; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
+            }
+        }
+        // Otherwise fall back to chart.thumb or generate via PDF.js
+        if (thumbPlaceholder.querySelectorAll('img').length === 0) {
+            if (chart.thumb) {
+                try { const img = new Image(); img.src = chart.thumb; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
+            } else if (chart.data) {
+                generateThumbnail(chart, 140).then(dataUrl => {
+                    if (dataUrl) {
+                        chart.thumb = dataUrl; // cache on chart
+                        try { const img = new Image(); img.src = dataUrl; img.alt = `${chart.name} thumbnail`; thumbPlaceholder.appendChild(img); } catch (e) {}
+                    }
+                });
+            }
         }
     });
 
@@ -452,6 +519,22 @@ function renderLiveMode() {
                         canvas.height = scaled.height;
                         const ctx = canvas.getContext('2d');
                         page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
+                            // overlay vector annotations from PageManager when available
+                            try {
+                                let pageId = null;
+                                const chartObj = AppState.charts[cIdx];
+                                if (chartObj && Array.isArray(chartObj.pageMap) && chartObj.pageMap.length >= p) {
+                                    pageId = chartObj.pageMap[p - 1];
+                                }
+                                if (pageId && window._pageManager) {
+                                    const strokes = window._pageManager.getAnnotation(pageId) || [];
+                                    if (strokes && strokes.length) {
+                                        try { window.PageManager_renderStrokes(ctx, strokes, 1); } catch (e) {}
+                                    }
+                                }
+                            } catch (e) {}
+
+                            // legacy bitmap annotations
                             const key = `${AppState.sessionCode}_${cIdx}_${p}`;
                             const ann = AppState.annotations[key];
                             if (ann) {
@@ -461,9 +544,8 @@ function renderLiveMode() {
                                 };
                                 img.src = ann;
                             }
-                            w.appendChild(canvas);
 
-                            // thumbnails are generated separately (one-per-chart) via generateThumbnail helper
+                            w.appendChild(canvas);
 
                             w.dataset.rendered = '1';
                             obs.unobserve(w);
@@ -480,112 +562,188 @@ function renderLiveMode() {
     });
     // initialize highlighting after rendering placeholders (small delay to allow DOM updates)
     setTimeout(() => { initLiveHighlighting(); }, 300);
-    // initialize splitter/resizer between pages and thumbs (responsive & draggable)
-    setTimeout(() => { initLiveResizer(); }, 320);
+    // Initialize layout helpers: highlighting is needed. Make the right
+    // column modular and reorderable via Sortable (chat/thumbs). The
+    // draggable splitter was removed because it trapped the right column
+    // inside the page scroll.
+    try {
+        // Enable dragging modules between left and right docks
+        const rightCol = document.querySelector('.live-right');
+        const leftDock = document.querySelector('.live-dock-left');
+        if (window.Sortable) {
+            try { if (rightCol && rightCol._sortable) rightCol._sortable.destroy(); } catch (e) {}
+            try { if (leftDock && leftDock._sortable) leftDock._sortable.destroy(); } catch (e) {}
+
+            const groupOpts = { name: 'live-modules', pull: true, put: true };
+
+            if (rightCol) {
+                rightCol._sortable = Sortable.create(rightCol, {
+                    group: groupOpts,
+                    animation: 150,
+                    swapThreshold: 0.65,
+                    fallbackOnBody: true,
+                    forceFallback: false,
+                    ghostClass: 'sortable-ghost',
+                    chosenClass: 'sortable-chosen',
+                    handle: '.module-header',
+                    draggable: '.live-module'
+                });
+            }
+
+            if (leftDock) {
+                leftDock._sortable = Sortable.create(leftDock, {
+                    group: groupOpts,
+                    animation: 150,
+                    swapThreshold: 0.65,
+                    fallbackOnBody: true,
+                    forceFallback: false,
+                    ghostClass: 'sortable-ghost',
+                    chosenClass: 'sortable-chosen',
+                    handle: '.module-header',
+                    draggable: '.live-module'
+                });
+            }
+        }
+    } catch (e) {}
 }
 
 // Live layout resizer: draggable splitter between .live-pages and .live-thumbs
 function initLiveResizer() {
     try {
-        const container = document.querySelector('.live-container');
-        const pages = document.querySelector('.live-pages');
-        const thumbs = document.querySelector('.live-thumbs');
-        if (!container || !pages || !thumbs) return;
-
-        // create splitter if missing
-        let splitter = container.querySelector('.live-splitter');
-        if (!splitter) {
-            splitter = document.createElement('div');
-            splitter.className = 'live-splitter';
-            splitter.tabIndex = 0;
-            splitter.setAttribute('role', 'separator');
-            splitter.setAttribute('aria-orientation', 'vertical');
-            splitter.setAttribute('aria-label', 'Resize thumbnails');
-            // insert splitter before thumbs
-            container.insertBefore(splitter, thumbs);
-        }
-
-        // apply saved width if present
-        const saved = parseInt(localStorage.getItem('liveThumbWidth') || '0', 10);
-        if (saved && saved > 80) {
-            thumbs.style.flex = `0 0 ${saved}px`;
-            thumbs.style.maxWidth = `${Math.max(saved, 220)}px`;
-            thumbs.setAttribute('aria-resizable', 'true');
-        } else {
-            thumbs.style.flex = thumbs.style.flex || '0 0 180px';
-        }
+        const splitter = document.getElementById('live-splitter');
+        const pagesWrapper = document.querySelector('.live-pages-wrapper');
+        const rightDock = document.querySelector('.live-right');
+        if (!splitter || !pagesWrapper || !rightDock) return;
 
         let dragging = false;
-        let startX = 0; let startY = 0; let startWidth = 0;
+        let startX = 0;
+        let startRightWidth = rightDock.getBoundingClientRect().width;
+
+        const minRight = 200; const maxRight = Math.max(360, window.innerWidth - 400);
 
         function onPointerDown(e) {
-            e.preventDefault();
             dragging = true;
-            startX = (e.clientX || (e.touches && e.touches[0].clientX)) || 0;
-            startY = (e.clientY || (e.touches && e.touches[0].clientY)) || 0;
-            startWidth = thumbs.getBoundingClientRect().width;
+            startX = e.clientX;
+            startRightWidth = rightDock.getBoundingClientRect().width;
             document.body.style.userSelect = 'none';
-            window.addEventListener('pointermove', onPointerMove);
-            window.addEventListener('pointerup', onPointerUp);
-            window.addEventListener('touchmove', onPointerMove, { passive: false });
-            window.addEventListener('touchend', onPointerUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
         }
 
         function onPointerMove(e) {
             if (!dragging) return;
-            e.preventDefault();
-            const clientX = (e.clientX || (e.touches && e.touches[0].clientX)) || 0;
-            const clientY = (e.clientY || (e.touches && e.touches[0].clientY)) || 0;
-            const containerRect = container.getBoundingClientRect();
-            if (containerRect.width === 0) return;
-
-            // If container is vertical (mobile), resize height instead of width
-            if (window.getComputedStyle(container).flexDirection === 'column') {
-                const delta = clientY - startY;
-                const pagesHeight = pages.getBoundingClientRect().height - delta;
-                // clamp
-                const min = 120; const max = containerRect.height - 80;
-                const newPagesH = Math.max(min, Math.min(max, pagesHeight));
-                pages.style.flex = `0 0 ${newPagesH}px`;
-                // persist
-                localStorage.setItem('liveThumbHeight', String(newPagesH));
-            } else {
-                const delta = startX - clientX; // dragging left increases thumb width
-                let newWidth = startWidth + delta;
-                // clamp between 100 and 480
-                newWidth = Math.max(100, Math.min(480, newWidth));
-                thumbs.style.flex = `0 0 ${Math.round(newWidth)}px`;
-                thumbs.style.maxWidth = `${Math.round(Math.max(newWidth, 220))}px`;
-                thumbs.setAttribute('aria-resizable', 'true');
-                localStorage.setItem('liveThumbWidth', String(Math.round(newWidth)));
-            }
+            const dx = startX - e.clientX;
+            let newRight = Math.round(startRightWidth + dx);
+            if (newRight < minRight) newRight = minRight;
+            if (newRight > maxRight) newRight = maxRight;
+            // set the right dock flex-basis so layout updates smoothly
+            rightDock.style.flex = `0 0 ${newRight}px`;
+            rightDock.style.maxWidth = `${Math.max(newRight, 220)}px`;
         }
 
         function onPointerUp() {
             dragging = false;
             document.body.style.userSelect = '';
-            window.removeEventListener('pointermove', onPointerMove);
-            window.removeEventListener('pointerup', onPointerUp);
-            window.removeEventListener('touchmove', onPointerMove);
-            window.removeEventListener('touchend', onPointerUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
         }
 
-        // pointer events if supported, otherwise fallback to mouse
+        // attach once
+        splitter.removeEventListener('pointerdown', onPointerDown);
         splitter.addEventListener('pointerdown', onPointerDown);
-        splitter.addEventListener('touchstart', onPointerDown, { passive: false });
+    } catch (e) {
+        // non-fatal
+    }
+}
 
-        // ensure thumbs sizing adapts on window resize
-        window.addEventListener('resize', () => {
-            const savedW = parseInt(localStorage.getItem('liveThumbWidth') || '0', 10);
-            const contW = container.getBoundingClientRect().width;
-            if (savedW && savedW > contW * 0.8) {
-                // reduce to 40% if it's too large
-                const adj = Math.max(120, Math.round(contW * 0.35));
-                thumbs.style.flex = `0 0 ${adj}px`;
-                localStorage.setItem('liveThumbWidth', String(adj));
+// Adjust the right dock's grid columns responsively so modules can sit
+// side-by-side based on available width. This helps when CSS minmax
+// behavior alone doesn't produce the desired number of columns.
+function adjustRightDockColumns(minColWidth = 140) {
+    try {
+        const rightDock = document.querySelector('.live-right');
+        if (!rightDock) return;
+        // ensure element is using grid so grid-template-columns will apply
+        try { rightDock.style.display = 'grid'; } catch (e) {}
+        const rect = rightDock.getBoundingClientRect();
+        const available = Math.max(0, rect.width - 12); // account for padding/gap
+        const cols = Math.max(1, Math.floor(available / minColWidth));
+        rightDock.style.gridTemplateColumns = `repeat(${cols}, minmax(${Math.max(96, Math.floor(minColWidth*0.8))}px, 1fr))`;
+    } catch (e) {}
+}
+
+// Render the chat UI into the Live view chat module (#live-chat-module .module-content)
+function renderLiveChatModule() {
+    try {
+        const container = document.querySelector('#live-chat-module .module-content');
+        if (!container) return;
+        // clear existing and build chat UI similar to sidebar module
+        container.innerHTML = '';
+        const msgs = document.createElement('div'); msgs.className = 'chat-messages'; container.appendChild(msgs);
+
+        container._chatIds = new Set();
+        container._pendingMap = {};
+
+        // load recent chat history
+        try {
+            const sessionCode = AppState.sessionCode;
+            if (sessionCode) {
+                fetch(`${SERVER_BASE}/api/sessions/${sessionCode}/chat`).then(r => { if (!r.ok) throw new Error('chat fetch failed'); return r.json(); }).then(data => {
+                    const list = Array.isArray(data.chat) ? data.chat : [];
+                    list.forEach(m => {
+                        try { if (m && m.id) container._chatIds.add(m.id); const own = (m.from === (AppState.isDirector ? 'Director' : 'Viewer')); appendToLive(msgs, m, { own, container }); } catch (e) {}
+                    });
+                }).catch(err => console.warn('Failed to load chat history', err));
             }
+        } catch (e) {}
+
+        // role selector
+        const roleRow = document.createElement('div'); roleRow.style.display = 'flex'; roleRow.style.gap = '8px'; roleRow.style.alignItems = 'center'; roleRow.style.marginBottom = '8px';
+        const roleLabel = document.createElement('div'); roleLabel.textContent = 'Role:'; roleLabel.style.fontSize = '0.85rem'; roleLabel.style.color = 'var(--text-secondary)'; roleRow.appendChild(roleLabel);
+        const roleSelect = document.createElement('select'); roleSelect.className = 'chat-role-select'; ['Pastor','Worship Leader','Production','Musician'].forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r; roleSelect.appendChild(o); }); roleRow.appendChild(roleSelect);
+        container.appendChild(roleRow);
+        try { const roleKey = `chat_role_${AppState.sessionCode || 'global'}`; const saved = localStorage.getItem(roleKey); if (saved) roleSelect.value = saved; } catch (e) {}
+        roleSelect.addEventListener('change', () => { try { localStorage.setItem(`chat_role_${AppState.sessionCode || 'global'}`, roleSelect.value); } catch (e) {} });
+
+        const form = document.createElement('div'); form.className = 'chat-input'; form.style.display = 'flex'; form.style.gap = '6px';
+        const input = document.createElement('input'); input.type = 'text'; input.placeholder = 'Send a message to session'; input.className = 'chat-input-field'; input.style.flex = '1 1 auto';
+        const sendBtn = document.createElement('button'); sendBtn.className = 'btn btn-primary'; sendBtn.textContent = 'Send';
+        form.appendChild(input); form.appendChild(sendBtn); container.appendChild(form);
+
+        function appendToLive(msgsEl, m, opts = {}) {
+            try {
+                if (!m) return;
+                const msg = m;
+                // reconcile pending
+                if (msg.clientTempId && container._pendingMap && container._pendingMap[msg.clientTempId]) {
+                    const pendingEl = container._pendingMap[msg.clientTempId]; pendingEl.classList.remove('pending'); try { pendingEl.dataset.msgId = msg.id; } catch (e) {}
+                    try { const meta = pendingEl.querySelector('.chat-meta'); if (meta) meta.textContent = `${msg.from || msg.role || 'User'}` + (msg.role ? ` • ${msg.role}` : ''); const body = pendingEl.querySelector('.chat-body'); if (body) body.textContent = msg.text || ''; } catch (e) {}
+                    if (msg.id) container._chatIds.add(msg.id); delete container._pendingMap[msg.clientTempId]; return;
+                }
+                if (msg.id && container._chatIds.has(msg.id)) return;
+                const el = document.createElement('div'); el.className = 'chat-msg'; const roleClass = msg.role ? `role-${msg.role.toLowerCase().replace(/\s+/g,'-')}` : ''; if (roleClass) el.classList.add(roleClass); if (opts.own) el.classList.add('own');
+                const meta = document.createElement('div'); meta.className = 'chat-meta'; meta.style.fontSize = '0.75rem'; meta.style.color = 'var(--text-secondary)'; meta.style.marginBottom = '4px'; meta.textContent = `${msg.from || msg.role || 'User'}` + (msg.role ? ` • ${msg.role}` : ''); el.appendChild(meta);
+                const body = document.createElement('div'); body.className = 'chat-body'; body.textContent = msg.text || ''; el.appendChild(body);
+                if (msg.id) { try { el.dataset.msgId = msg.id; } catch (e) {} container._chatIds.add(msg.id); }
+                if (msg.clientTempId && !msg.id) { try { el.dataset.tempId = msg.clientTempId; } catch (e) {} el.classList.add('pending'); container._pendingMap[msg.clientTempId] = el; }
+                msgsEl.appendChild(el); msgsEl.scrollTop = msgsEl.scrollHeight;
+            } catch (e) {}
+        }
+
+        // expose
+        container._appendChatMessage = (m) => appendToLive(msgs, m);
+
+        sendBtn.addEventListener('click', () => {
+            try {
+                const text = (input.value || '').trim(); if (!text) return; const role = roleSelect.value || 'Musician'; const clientTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+                const payload = { type: 'chat:message', session: AppState.sessionCode, from: AppState.isDirector ? 'Director' : 'Viewer', role, text, clientTempId };
+                appendToLive(msgs, payload, { own: true });
+                if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify(payload)); else showToast('Not connected to server', 900);
+                input.value = '';
+            } catch (e) {}
         });
-    } catch (e) { console.warn('initLiveResizer failed', e); }
+        input.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendBtn.click(); });
+    } catch (e) {}
 }
 
 // --- WebSocket based live updates (preferred over polling) ---
@@ -596,6 +754,259 @@ function getWebSocketUrl() {
         return `${protocol}//${url.host}`;
     } catch (e) {
         return `ws://localhost:3000`;
+    }
+}
+
+// Send a single-page update over the live websocket
+function sendPageUpdate(pageId) {
+    try {
+        if (!_ws || _ws.readyState !== WebSocket.OPEN) return;
+        if (!AppState.sessionCode) return;
+        if (!window._pageManager) return;
+        const page = window._pageManager.getPage(pageId) || { id: pageId, annotation: window._pageManager.getAnnotation(pageId) || [] };
+        const msg = { type: 'page:update', session: AppState.sessionCode, pageId: pageId, page: page };
+        try { _ws.send(JSON.stringify(msg)); } catch (e) {}
+    } catch (e) {}
+}
+
+// SidebarManager: renders thumbnails for pages (one-per-page) and provides click-to-jump
+class SidebarManager {
+    constructor(opts = {}) {
+        this.container = document.getElementById('sidebar-thumbs');
+        // modules: ordered list of module ids
+        this.modules = [];
+        // mapping id -> module object and DOM references
+        this.moduleMap = {};
+        // storage key for layout (per-session when available)
+        this.baseKey = 'sidebar_layout';
+
+        // ensure container exists
+        if (!this.container) {
+            const aside = document.getElementById('sidebar');
+            if (aside) {
+                const div = document.createElement('div');
+                div.id = 'sidebar-thumbs';
+                div.className = 'sidebar-thumbs';
+                aside.appendChild(div);
+                this.container = div;
+            }
+        }
+
+        // Register a default thumbnails module that mirrors previous behavior
+        const thumbnailsModule = {
+            id: 'thumbnails',
+            title: 'Thumbnails',
+            render: (contentEl) => {
+                try {
+                    contentEl.innerHTML = '';
+                    if (!window._pageManager) {
+                        contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
+                        return;
+                    }
+                    const pages = window._pageManager.serialize().pages || {};
+                    const ids = Object.keys(pages || {});
+                    if (!ids.length) { contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>'; return; }
+                    ids.forEach(pid => {
+                        const p = pages[pid] || {};
+                        const item = document.createElement('div');
+                        item.className = 'sidebar-thumb';
+                        item.dataset.pageId = pid;
+                        item.style.position = item.style.position || 'relative';
+                        const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                        if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = `page ${pid}`; imgWrap.appendChild(img); }
+                        else { imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml((p.name||'').toString().slice(0,12))}</div>`; }
+                        item.appendChild(imgWrap);
+                        const badge = document.createElement('div'); badge.className = 'thumb-changed-badge'; badge.textContent = 'Updated'; item.appendChild(badge);
+                        const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = p.name || pid; item.appendChild(label);
+                        item.addEventListener('click', () => { this.onThumbClick(pid); });
+                        contentEl.appendChild(item);
+                    });
+                } catch (e) { /* non-fatal */ }
+            }
+        };
+
+        // register default module and render
+        this.registerModule(thumbnailsModule, { atEnd: true });
+        this.restoreLayout();
+        this.renderModules();
+    }
+
+    // Register a module object that implements { id, title, render(container), optional: collapse, expand, resize, destroy }
+    registerModule(module, opts = {}) {
+        if (!module || !module.id) return false;
+        // avoid duplicates
+        if (this.moduleMap[module.id]) {
+            // replace implementation
+            this.moduleMap[module.id].module = module;
+            return true;
+        }
+        this.moduleMap[module.id] = { module: module, el: null };
+        if (opts.atStart) this.modules.unshift(module.id);
+        else this.modules.push(module.id);
+        this.persistLayout();
+        return true;
+    }
+
+    removeModule(moduleId) {
+        if (!this.moduleMap[moduleId]) return false;
+        const idx = this.modules.indexOf(moduleId);
+        if (idx !== -1) this.modules.splice(idx, 1);
+        const rec = this.moduleMap[moduleId];
+        if (rec && rec.el && rec.el.parentNode) rec.el.parentNode.removeChild(rec.el);
+        delete this.moduleMap[moduleId];
+        this.persistLayout();
+        return true;
+    }
+
+    // Render all modules in order into the sidebar container
+    renderModules() {
+        try {
+            if (!this.container) return;
+            this.container.innerHTML = '';
+
+            // create a drag handle area (Sortable will use .module-header as handle)
+            this.modules.forEach(id => {
+                const rec = this.moduleMap[id];
+                if (!rec || !rec.module) return;
+                const mod = rec.module;
+                const panel = document.createElement('div');
+                panel.className = 'sidebar-module';
+                panel.dataset.moduleId = id;
+
+                const header = document.createElement('div');
+                header.className = 'module-header';
+                header.textContent = mod.title || id;
+                header.tabIndex = 0;
+
+                // collapse button
+                const collapseBtn = document.createElement('button');
+                collapseBtn.className = 'module-collapse-btn';
+                collapseBtn.title = 'Collapse';
+                collapseBtn.innerHTML = '&#9660;';
+                collapseBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    panel.classList.toggle('collapsed');
+                    const collapsed = panel.classList.contains('collapsed');
+                    try { if (collapsed && typeof mod.collapse === 'function') mod.collapse(); else if (!collapsed && typeof mod.expand === 'function') mod.expand(); } catch (err) {}
+                    this.persistLayout();
+                });
+                header.appendChild(collapseBtn);
+
+                panel.appendChild(header);
+
+                const content = document.createElement('div');
+                content.className = 'module-content';
+                panel.appendChild(content);
+
+                // render module into content area
+                try { if (typeof mod.render === 'function') mod.render(content); } catch (e) {}
+
+                this.container.appendChild(panel);
+                rec.el = panel;
+            });
+
+            // make modules reorderable
+            if (window.Sortable && this.container) {
+                if (this._sortable) try { this._sortable.destroy(); } catch (e) {}
+                this._sortable = Sortable.create(this.container, {
+                    animation: 150,
+                    handle: '.module-header',
+                    onEnd: (evt) => {
+                        // update modules array
+                        const ids = Array.from(this.container.querySelectorAll('.sidebar-module')).map(n => n.dataset.moduleId).filter(Boolean);
+                        this.modules = ids;
+                        this.persistLayout();
+                    }
+                });
+            }
+        } catch (e) { /* ignore render errors */ }
+    }
+
+    // update thumbnail graphic for a page; targets thumbnails module content
+    updateThumb(pageId, thumbDataUrl) {
+        try {
+            if (!this.container) return;
+            const item = this.container.querySelector(`.sidebar-thumb[data-page-id="${pageId}"]`);
+            if (!item) return;
+            const imgWrap = item.querySelector('.sidebar-thumb-img');
+            if (!imgWrap) return;
+            imgWrap.innerHTML = '';
+            if (thumbDataUrl) {
+                const img = new Image(); img.src = thumbDataUrl; img.alt = pageId; imgWrap.appendChild(img);
+            } else {
+                imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(pageId.slice(0,8))}</div>`;
+            }
+            // flash visual cue
+            try { flashThumb(pageId); } catch (e) {}
+        } catch (e) {}
+    }
+
+    onThumbClick(pageId) {
+        try {
+            // Find chart & page index for this pageId
+            for (let c = 0; c < (AppState.charts || []).length; c++) {
+                const chart = AppState.charts[c];
+                if (!chart || !Array.isArray(chart.pageMap)) continue;
+                const idx = chart.pageMap.indexOf(pageId);
+                if (idx !== -1) {
+                    // Scroll to corresponding live-page-wrapper
+                    const pagesContainer = document.getElementById('live-pages');
+                    if (pagesContainer) {
+                        const selector = `.live-page-wrapper[data-chart-id="${chart.id}"][data-page="${idx+1}"]`;
+                        const target = pagesContainer.querySelector(selector);
+                        if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+                    }
+                    // fallback: switch to edit and open this chart/page
+                    try { AppState.currentChartIndex = c; AppState.currentPageNumber = idx + 1; switchToMode('edit'); renderCurrentChart(); } catch (e) {}
+                    return;
+                }
+            }
+        } catch (e) {}
+    }
+
+    // Persist layout (order + collapsed state) to localStorage per-session
+    persistLayout() {
+        try {
+            const key = `${this.baseKey}_${AppState.sessionCode || 'global'}`;
+            const order = this.modules.slice();
+            const collapsed = {};
+            (this.modules || []).forEach(id => {
+                const rec = this.moduleMap[id];
+                if (rec && rec.el) collapsed[id] = rec.el.classList.contains('collapsed');
+            });
+            const payload = { order, collapsed };
+            localStorage.setItem(key, JSON.stringify(payload));
+        } catch (e) {}
+    }
+
+    restoreLayout() {
+        try {
+            const key = `${this.baseKey}_${AppState.sessionCode || 'global'}`;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const p = JSON.parse(raw);
+            if (p && Array.isArray(p.order)) {
+                // ensure modules referenced exist; otherwise append missing
+                const order = p.order.filter(id => !!this.moduleMap[id]);
+                // append any registered modules not in order
+                Object.keys(this.moduleMap).forEach(id => { if (order.indexOf(id) === -1) order.push(id); });
+                this.modules = order;
+            }
+            // apply collapsed state after renderModules
+            setTimeout(() => {
+                try {
+                    const raw2 = localStorage.getItem(key);
+                    if (!raw2) return;
+                    const p2 = JSON.parse(raw2);
+                    if (p2 && p2.collapsed) {
+                        Object.keys(p2.collapsed).forEach(id => {
+                            const rec = this.moduleMap[id];
+                            if (rec && rec.el && p2.collapsed[id]) rec.el.classList.add('collapsed');
+                        });
+                    }
+                } catch (e) {}
+            }, 40);
+        } catch (e) {}
     }
 }
 
@@ -617,7 +1028,60 @@ function startLiveSocket() {
         try {
             const j = JSON.parse(ev.data);
             if (j && j.type === 'charts:update') {
-                handleServerChartsUpdate(j.charts || []);
+                handleServerChartsUpdate(j);
+            } else if (j && j.type === 'page:update') {
+                // single-page update from server: apply to PageManager and UI
+                try {
+                    const pageId = j.pageId;
+                    const page = j.page || {};
+                    if (pageId && window._pageManager) {
+                        try { window._pageManager.updatePageAnnotation(pageId, page.annotation || []); } catch (e) {}
+                        // if current viewer is on this page, re-render annotation canvas
+                        try {
+                            const current = getCurrentPageId();
+                            if (current === pageId && AppState.annotationCanvas && window._pageManager) {
+                                window._pageManager.renderAnnotationToCanvas(pageId, AppState.annotationCanvas);
+                            }
+                        } catch (e) {}
+                        // update sidebar thumbnail if present
+                        try { if (window._sidebarManager && page.thumb) window._sidebarManager.updateThumb(pageId, page.thumb); } catch (e) {}
+                        // persist to local storage copy of pages
+                        try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+                    }
+                } catch (e) {}
+            } else if (j && j.type === 'chat:message') {
+                // incoming chat message for session (server broadcasts { type:'chat:message', message: {...} })
+                try {
+                    const incoming = j.message || j;
+                    if (window._sidebarManager && window._sidebarManager.moduleMap && window._sidebarManager.moduleMap['chat']) {
+                        const rec = window._sidebarManager.moduleMap['chat'];
+                        if (rec && rec.el) {
+                            const content = rec.el.querySelector('.module-content');
+                            if (content && typeof content._appendChatMessage === 'function') {
+                                content._appendChatMessage(incoming);
+                            } else {
+                                // fallback: try to append to a .chat-messages area
+                                const msgs = content ? content.querySelector('.chat-messages') : null;
+                                if (msgs) {
+                                    const el = document.createElement('div'); el.className = 'chat-msg'; el.textContent = `${incoming.from || 'User'}: ${incoming.text || ''}`; msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight;
+                                }
+                            }
+                        }
+                    } else {
+                        // fallback: try to find the Live view chat module content
+                        try {
+                            const liveContent = document.querySelector('#live-chat-module .module-content');
+                            if (liveContent && typeof liveContent._appendChatMessage === 'function') {
+                                liveContent._appendChatMessage(incoming);
+                            } else {
+                                const msgs = document.querySelector('#live-chat-module .module-content .chat-messages') || document.querySelector('#live-chat-module .chat-messages');
+                                if (msgs) {
+                                    const el = document.createElement('div'); el.className = 'chat-msg'; el.textContent = `${incoming.from || 'User'}: ${incoming.text || ''}`; msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight;
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
             }
         } catch (e) {}
     });
@@ -634,35 +1098,49 @@ function stopLiveSocket() {
 }
 
 function handleServerChartsUpdate(serverCharts) {
+    // serverPayload may include charts and pages
+    const payload = serverCharts || {};
+    const serverChartsArr = Array.isArray(payload.charts) ? payload.charts : [];
+    const serverPages = payload.pages || {};
+
     // Preserve visible position: find first visible page wrapper
     const pagesContainer = document.getElementById('live-pages');
-    if (!pagesContainer) return;
-
-    const containerRect = pagesContainer.getBoundingClientRect();
-    const wrappers = Array.from(pagesContainer.querySelectorAll('.live-page-wrapper'));
     let visible = null;
-    for (const w of wrappers) {
-        const r = w.getBoundingClientRect();
-        if (r.top < containerRect.bottom && r.bottom > containerRect.top) {
-            visible = { chartId: w.dataset.chartId, page: w.dataset.page, offset: r.top - containerRect.top };
-            break;
+    if (pagesContainer) {
+        const containerRect = pagesContainer.getBoundingClientRect();
+        const wrappers = Array.from(pagesContainer.querySelectorAll('.live-page-wrapper'));
+        for (const w of wrappers) {
+            const r = w.getBoundingClientRect();
+            if (r.top < containerRect.bottom && r.bottom > containerRect.top) {
+                visible = { chartId: w.dataset.chartId, page: w.dataset.page, offset: r.top - containerRect.top };
+                break;
+            }
         }
     }
 
     const local = JSON.stringify(AppState.charts || []);
-    const remote = JSON.stringify(serverCharts || []);
-    if (local === remote) return; // nothing changed
+    const remote = JSON.stringify(serverChartsArr || []);
+    if (local === remote && (!window._pageManager || JSON.stringify(window._pageManager.serialize().pages || {}) === JSON.stringify(serverPages || {}))) return; // nothing changed
 
     // update state
-    AppState.charts = serverCharts;
+    AppState.charts = serverChartsArr;
     try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+
+    // update PageManager with server pages if available
+    try {
+        if (window._pageManager) {
+            window._pageManager.deserialize({ charts: serverChartsArr, pages: serverPages });
+            // persist locally
+            try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+        }
+    } catch (e) {}
 
     // show toast to indicate update
     showToast('Session updated by Music Director');
 
     // show a small live-update badge near thumbnails
     try {
-        const thumbsContainer = document.getElementById('live-thumbs');
+    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs');
         if (thumbsContainer) {
             let badge = thumbsContainer.querySelector('.live-update-badge');
             if (!badge) {
@@ -678,28 +1156,53 @@ function handleServerChartsUpdate(serverCharts) {
         }
     } catch (e) {}
 
-    // Re-render live view and attempt to preserve scroll position
+    // Partial update: if Live mode, update only changed chart blocks where possible
     if (AppState.viewMode === 'live') {
-        renderLiveMode();
-        // animate each chart block briefly to draw attention to the reorder
+        try {
+            // Update thumbnails for charts that changed
+            AppState.charts.forEach((chart, idx) => {
+                try {
+                    const thumbEl = document.querySelector(`.live-thumb[data-chart-id="${chart.id}"]`);
+                    if (thumbEl && window._pageManager && Array.isArray(chart.pageMap) && chart.pageMap.length > 0) {
+                        const firstPage = window._pageManager.getPage(chart.pageMap[0]);
+                        if (firstPage && firstPage.thumb && (!thumbEl.querySelector('img') || thumbEl.querySelector('img').src !== firstPage.thumb)) {
+                            thumbEl.innerHTML = '';
+                            const img = new Image(); img.src = firstPage.thumb; img.alt = `${chart.name} thumbnail`; thumbEl.appendChild(img);
+                        }
+                    }
+                } catch (e) {}
+            });
+
+            // For chart blocks that are present, re-render only those blocks which now have pageMaps
+            AppState.charts.forEach((chart, chartIdx) => {
+                if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length > 0) {
+                    const block = document.querySelector(`.live-chart-block[data-chart-index="${chartIdx}"]`);
+                    if (block) {
+                        // re-render this chart block
+                        renderChartBlock(chartIdx);
+                    }
+                }
+            });
+        } catch (e) {
+            // fallback to full re-render
+            try { renderLiveMode(); } catch (err) {}
+        }
+
+        // animate reorder and preserve scroll position
         setTimeout(() => {
             try {
                 const pagesContainer2 = document.getElementById('live-pages');
                 const chartBlocks = pagesContainer2 ? Array.from(pagesContainer2.querySelectorAll('.live-chart-block')) : [];
-                chartBlocks.forEach(cb => {
-                    cb.classList.add('reorder-anim');
-                    setTimeout(() => cb.classList.remove('reorder-anim'), 800);
-                });
+                chartBlocks.forEach(cb => { cb.classList.add('reorder-anim'); setTimeout(() => cb.classList.remove('reorder-anim'), 800); });
             } catch (e) {}
         }, 120);
-        // after a short delay to allow DOM to populate, scroll to preserved position
+
         setTimeout(() => {
             if (!visible) return;
             const pagesContainer2 = document.getElementById('live-pages');
             const target = pagesContainer2.querySelector(`.live-page-wrapper[data-chart-id="${visible.chartId}"][data-page="${visible.page}"]`);
             if (target) {
                 const rect = target.getBoundingClientRect();
-                // scroll so that target is at approximately the same offset from top
                 const desiredTop = pagesContainer2.scrollTop + (rect.top - pagesContainer2.getBoundingClientRect().top) - visible.offset;
                 pagesContainer2.scrollTop = Math.max(0, Math.round(desiredTop));
             }
@@ -710,7 +1213,7 @@ function handleServerChartsUpdate(serverCharts) {
 // IntersectionObserver to highlight current page/thumbnail
 function initLiveHighlighting() {
     const pagesContainer = document.getElementById('live-pages');
-    const thumbsContainer = document.getElementById('live-thumbs');
+    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs');
     if (!pagesContainer || !thumbsContainer) return;
 
     if (_highlightObserver) {
@@ -738,6 +1241,72 @@ function initLiveHighlighting() {
 
     // observe current wrappers
     Array.from(pagesContainer.querySelectorAll('.live-page-wrapper')).forEach(w => _highlightObserver.observe(w));
+
+    // helper to render a single chart block (used for partial updates)
+    window.renderChartBlock = function(chartIdx) {
+        try {
+            const chart = AppState.charts[chartIdx];
+            const pagesContainerLocal = document.getElementById('live-pages');
+            if (!chart || !chart.data || !pagesContainerLocal) return;
+            const chartBlock = pagesContainerLocal.querySelector(`.live-chart-block[data-chart-index="${chartIdx}"]`);
+            if (!chartBlock) return;
+            chartBlock.innerHTML = '<div class="chart-loading">Loading...</div>';
+            // same lazy render as in renderLiveMode for this chart
+            pdfjsLib.getDocument(chart.data).promise.then(pdf => {
+                chartBlock.innerHTML = '';
+                for (let p = 1; p <= pdf.numPages; p++) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'live-page-wrapper';
+                    wrapper.dataset.chartId = chart.id;
+                    wrapper.dataset.chartIndex = chartIdx;
+                    wrapper.dataset.page = p;
+                    wrapper.dataset.rendered = '0';
+                    wrapper.style.minHeight = '200px';
+                    chartBlock.appendChild(wrapper);
+                }
+
+                const observer = new IntersectionObserver((entries, obs) => {
+                    entries.forEach(entry => {
+                        if (!entry.isIntersecting) return;
+                        const w = entry.target;
+                        const p = parseInt(w.dataset.page, 10);
+                        if (w.dataset.rendered === '1') { obs.unobserve(w); return; }
+
+                        pdf.getPage(p).then(page => {
+                            const viewport = page.getViewport({ scale: 1 });
+                            const scale = Math.min(900 / viewport.width, 1);
+                            const scaled = page.getViewport({ scale });
+                            const canvas = document.createElement('canvas');
+                            canvas.width = scaled.width; canvas.height = scaled.height;
+                            const ctx = canvas.getContext('2d');
+                            page.render({ canvasContext: ctx, viewport: scaled }).promise.then(() => {
+                                // overlay annotations
+                                try {
+                                    let pageId = null;
+                                    if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= p) pageId = chart.pageMap[p-1];
+                                    if (pageId && window._pageManager) {
+                                        const strokes = window._pageManager.getAnnotation(pageId) || [];
+                                        if (strokes && strokes.length) window.PageManager_renderStrokes(ctx, strokes, 1);
+                                    }
+                                } catch (e) {}
+                                // legacy bitmap annotations
+                                const key = `${AppState.sessionCode}_${chartIdx}_${p}`;
+                                const ann = AppState.annotations[key];
+                                if (ann) {
+                                    const img = new Image(); img.onload = () => { try { ctx.drawImage(img,0,0,canvas.width,canvas.height); } catch(e){} }; img.src = ann;
+                                }
+                                w.appendChild(canvas);
+                                w.dataset.rendered = '1'; obs.unobserve(w);
+                            }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
+                        }).catch(() => { w.dataset.rendered = '1'; obs.unobserve(w); });
+                    });
+                }, { root: chartBlock, rootMargin: '400px 0px', threshold: 0.01 });
+
+                const wrappers = chartBlock.querySelectorAll('.live-page-wrapper');
+                wrappers.forEach(w => observer.observe(w));
+            }).catch(() => { chartBlock.innerHTML = '<div class="chart-error">Failed to load chart</div>'; });
+        } catch (e) {}
+    };
 }
 
 // Simple toast
@@ -1007,10 +1576,14 @@ function saveSessionCharts() {
         const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
             try {
+                // include pages from PageManager when available
+                let pagesPayload = undefined;
+                try { if (window._pageManager) { pagesPayload = window._pageManager.serialize().pages; } } catch (e) { pagesPayload = undefined; }
+                const body = pagesPayload ? { charts: AppState.charts, pages: pagesPayload } : { charts: AppState.charts };
                 const res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
-                    body: JSON.stringify({ charts: AppState.charts })
+                    body: JSON.stringify(body)
                 });
                 if (res.ok) {
                     try { localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts })); } catch (e) {}
@@ -1090,6 +1663,8 @@ async function switchToMode(mode) {
             } catch (e) {}
         }
         renderLiveMode();
+    // render the Live chat UI into the Live view's chat module (if present)
+    try { renderLiveChatModule(); } catch (e) {}
         // start websocket for chart updates so viewers get reorders/changes
         startLiveSocket();
     } else if (mode === 'organize') {
@@ -1139,17 +1714,62 @@ function toggleAnnotationMode() {
         btn.classList.remove('active');
         canvas.classList.remove('active');
     }
+
+    // Show/hide annotation toolbar only when PageManager is enabled
+    try {
+        const toolbar = document.getElementById('annotation-toolbar');
+        if (toolbar) {
+            if (AppState.annotationMode && FEATURE_PAGE_MANAGER && window._pageManager) {
+                toolbar.hidden = false;
+            } else {
+                toolbar.hidden = true;
+            }
+        }
+    } catch (e) {}
 }
 
 function saveAnnotations() {
     const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${AppState.currentPageNumber}`;
-    AppState.annotations[key] = AppState.annotationCanvas.toDataURL();
+    // prefer PageManager vector storage when available
+    try {
+        const chart = (AppState.charts || [])[AppState.currentChartIndex];
+        let pageId = null;
+        if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= AppState.currentPageNumber) {
+            pageId = chart.pageMap[AppState.currentPageNumber - 1];
+        }
+        if (window._pageManager && pageId) {
+            // if PageManager has an annotation (vector), persist it
+            const strokes = window._pageManager.getAnnotation(pageId) || [];
+            window._pageManager.updatePageAnnotation(pageId, strokes);
+            try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+            return;
+        }
+    } catch (e) {
+        // ignore and fallback to legacy
+    }
+    // legacy fallback: store PNG dataURL
+    try { AppState.annotations[key] = AppState.annotationCanvas.toDataURL(); } catch (e) {}
 }
 
 function restoreAnnotations() {
     const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${AppState.currentPageNumber}`;
+    // if PageManager is available, render vector strokes
+    try {
+        const chart = (AppState.charts || [])[AppState.currentChartIndex];
+        let pageId = null;
+        if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= AppState.currentPageNumber) {
+            pageId = chart.pageMap[AppState.currentPageNumber - 1];
+        }
+        if (window._pageManager && pageId) {
+            // render strokes into annotation canvas
+            try { AppState.annotationContext.clearRect(0, 0, AppState.annotationCanvas.width, AppState.annotationCanvas.height); } catch (e) {}
+            window._pageManager.renderAnnotationToCanvas(pageId, AppState.annotationCanvas);
+            return;
+        }
+    } catch (e) { /* continue to legacy */ }
+
+    // legacy PNG fallback
     const savedAnnotation = AppState.annotations[key];
-    
     if (savedAnnotation) {
         const img = new Image();
         img.onload = () => {
@@ -1158,47 +1778,148 @@ function restoreAnnotations() {
         };
         img.src = savedAnnotation;
     } else {
-        AppState.annotationContext.clearRect(0, 0, AppState.annotationCanvas.width, AppState.annotationCanvas.height);
+        try { AppState.annotationContext.clearRect(0, 0, AppState.annotationCanvas.width, AppState.annotationCanvas.height); } catch (e) {}
     }
 }
 
 // Drawing
 function startDrawing(e) {
     if (!AppState.annotationMode) return;
-    
     AppState.isDrawing = true;
     const rect = AppState.annotationCanvas.getBoundingClientRect();
-    AppState.lastX = e.clientX - rect.left;
-    AppState.lastY = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    AppState.lastX = x;
+    AppState.lastY = y;
+    // start a new vector stroke
+    AppState.currentStroke = {
+        type: 'pen',
+        color: ANNOTATION_CONFIG.strokeStyle,
+        width: ANNOTATION_CONFIG.lineWidth,
+        points: [{ x, y }]
+    };
+}
+
+// Helper: determine current pageId for vector annotations
+function getCurrentPageId() {
+    try {
+        const chart = (AppState.charts || [])[AppState.currentChartIndex];
+        if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= AppState.currentPageNumber) {
+            return chart.pageMap[AppState.currentPageNumber - 1];
+        }
+        return `legacy_${AppState.sessionCode}_${AppState.currentChartIndex}_${AppState.currentPageNumber}`;
+    } catch (e) { return null; }
+}
+
+function undoLastStroke() {
+    try {
+        if (!window._pageManager) return false;
+        const pageId = getCurrentPageId();
+        if (!pageId) return false;
+        const stack = AppState.pageUndoStacks[pageId] || [];
+        if (stack.length === 0) return false;
+        const prev = stack.pop();
+        window._pageManager.updatePageAnnotation(pageId, prev || []);
+        try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+        // update canvas immediately
+        try { window._pageManager.renderAnnotationToCanvas(pageId, AppState.annotationCanvas); } catch (e) {}
+            // notify server and other clients about this single-page change
+            try { sendPageUpdate(pageId); } catch (e) {}
+        return true;
+    } catch (e) { return false; }
+}
+
+function clearPageAnnotations() {
+    try {
+        if (!window._pageManager) return false;
+        const pageId = getCurrentPageId();
+        if (!pageId) return false;
+        const existing = window._pageManager.getAnnotation(pageId) || [];
+        // push snapshot for undo
+        AppState.pageUndoStacks[pageId] = AppState.pageUndoStacks[pageId] || [];
+        AppState.pageUndoStacks[pageId].push(existing.slice());
+        window._pageManager.updatePageAnnotation(pageId, []);
+        try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+        try { window._pageManager.renderAnnotationToCanvas(pageId, AppState.annotationCanvas); } catch (e) {}
+        // notify server and other clients about this single-page clear
+        try { sendPageUpdate(pageId); } catch (e) {}
+        return true;
+    } catch (e) { return false; }
 }
 
 function draw(e) {
     if (!AppState.isDrawing || !AppState.annotationMode) return;
-    
     const rect = AppState.annotationCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
+
     const ctx = AppState.annotationContext;
     ctx.strokeStyle = ANNOTATION_CONFIG.strokeStyle;
     ctx.lineWidth = ANNOTATION_CONFIG.lineWidth;
     ctx.lineCap = ANNOTATION_CONFIG.lineCap;
     ctx.lineJoin = ANNOTATION_CONFIG.lineJoin;
-    
+
     ctx.beginPath();
     ctx.moveTo(AppState.lastX, AppState.lastY);
     ctx.lineTo(x, y);
     ctx.stroke();
-    
+
+    // record point in current stroke
+    try {
+        if (AppState.currentStroke && Array.isArray(AppState.currentStroke.points)) {
+            AppState.currentStroke.points.push({ x, y });
+        }
+    } catch (e) {}
+
     AppState.lastX = x;
     AppState.lastY = y;
 }
 
 function stopDrawing() {
-    if (AppState.isDrawing) {
-        AppState.isDrawing = false;
-        saveAnnotations();
+    if (!AppState.isDrawing) return;
+    AppState.isDrawing = false;
+    // finalize current stroke and persist vector annotation via PageManager if available
+    try {
+        const key = `${AppState.sessionCode}_${AppState.currentChartIndex}_${AppState.currentPageNumber}`;
+        // use pageManager if available
+        if (window._pageManager) {
+            // determine pageId: if chart has pageMap, pick the matching page for currentPageNumber
+            const chart = (AppState.charts || [])[AppState.currentChartIndex];
+            let pageId = null;
+            if (chart && Array.isArray(chart.pageMap) && chart.pageMap.length >= AppState.currentPageNumber) {
+                pageId = chart.pageMap[AppState.currentPageNumber - 1];
+            }
+            // fallback to key-based synthetic id
+            if (!pageId) pageId = `legacy_${key}`;
+
+            // get existing strokes and push snapshot for undo
+            const existing = window._pageManager.getAnnotation(pageId) || [];
+            AppState.pageUndoStacks[pageId] = AppState.pageUndoStacks[pageId] || [];
+            // store snapshot copy (limit history to 50)
+            try { AppState.pageUndoStacks[pageId].push(existing.slice()); if (AppState.pageUndoStacks[pageId].length > 50) AppState.pageUndoStacks[pageId].shift(); } catch(e){}
+            if (AppState.currentStroke) existing.push(AppState.currentStroke);
+            window._pageManager.updatePageAnnotation(pageId, existing);
+            // also persist to localStorage for session
+            try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+            // notify server/other clients about page-level update
+            try { sendPageUpdate(pageId); } catch (e) {}
+            // update sidebar thumbnail if a thumb was generated/changed
+            try {
+                if (window._sidebarManager && window._pageManager) {
+                    const p = window._pageManager.getPage(pageId) || {};
+                    if (p.thumb) window._sidebarManager.updateThumb(pageId, p.thumb);
+                }
+            } catch (e) {}
+        } else {
+            // fallback: rasterize canvas to dataURL (legacy behavior)
+            saveAnnotations();
+        }
+    } catch (e) {
+        // always fall back to legacy save on error
+        try { saveAnnotations(); } catch (err) {}
     }
+
+    AppState.currentStroke = null;
 }
 
 // Event Listeners
@@ -1236,12 +1957,14 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateThemeToggleIcons(theme) {
         const toggles = document.querySelectorAll('.theme-toggle');
         toggles.forEach(btn => {
+            // Show an icon representing the CURRENT theme so the toggle visually
+            // matches what the user sees: moon for dark, sun for light.
             if (theme === 'dark') {
-                // Sun icon for light (to indicate switching back)
-                btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <circle cx="12" cy="12" r="4"></circle>\n                        <path d="M12 2v2"></path>\n                        <path d="M12 20v2"></path>\n                        <path d="M4.93 4.93l1.41 1.41"></path>\n                        <path d="M17.66 17.66l1.41 1.41"></path>\n                        <path d="M2 12h2"></path>\n                        <path d="M20 12h2"></path>\n                        <path d="M4.93 19.07l1.41-1.41"></path>\n                        <path d="M17.66 6.34l1.41-1.41"></path>\n                    </svg>`;
-            } else {
-                // Moon icon for dark (to indicate switching to dark)
+                // Moon icon when in dark mode
                 btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>\n                    </svg>`;
+            } else {
+                // Sun icon when in light mode
+                btn.innerHTML = `\n                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n                        <circle cx="12" cy="12" r="4"></circle>\n                        <path d="M12 2v2"></path>\n                        <path d="M12 20v2"></path>\n                        <path d="M4.93 4.93l1.41 1.41"></path>\n                        <path d="M17.66 17.66l1.41 1.41"></path>\n                        <path d="M2 12h2"></path>\n                        <path d="M20 12h2"></path>\n                        <path d="M4.93 19.07l1.41-1.41"></path>\n                        <path d="M17.66 6.34l1.41-1.41"></path>\n                    </svg>`;
             }
         });
     }
@@ -1249,6 +1972,205 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize theme from localStorage (per-client)
     const savedTheme = localStorage.getItem('theme') || 'light';
     applyTheme(savedTheme);
+
+    // Initialize PageManager (vector annotation/page model) if available and enabled by feature flag
+    try {
+        if (FEATURE_PAGE_MANAGER && window.PageManager) {
+            window._pageManager = new PageManager({ pdfjsLib: window.pdfjsLib });
+            // attempt to restore any saved pages for this session
+            try { window._pageManager.restoreFromLocalStorage(AppState.sessionCode); } catch (e) {}
+            // create sidebar manager and render thumbnails if possible
+            try {
+                window._sidebarManager = new SidebarManager();
+                // render initial sidebar from any restored pages
+                try { window._sidebarManager.renderModules(); } catch (e) {}
+                // Register a lightweight Chat module scaffold for demo and reordering
+                try {
+                    const chatModule = {
+                        id: 'chat',
+                        title: 'Chat',
+                        render: (contentEl) => {
+                            try {
+                                contentEl.innerHTML = '';
+                                const msgs = document.createElement('div');
+                                msgs.className = 'chat-messages';
+                                contentEl.appendChild(msgs);
+
+                                // tiny in-memory dedupe and pending map per module instance
+                                contentEl._chatIds = new Set(); // known server message ids
+                                contentEl._pendingMap = {}; // tempId -> DOM element for pending local messages
+
+                                // load recent chat history for this session (and populate seen ids)
+                                try {
+                                    const sessionCode = AppState.sessionCode;
+                                    if (sessionCode) {
+                                        fetch(`${SERVER_BASE}/api/sessions/${sessionCode}/chat`).then(r => {
+                                            if (!r.ok) throw new Error('chat fetch failed');
+                                            return r.json();
+                                        }).then(data => {
+                                            try {
+                                                const list = Array.isArray(data.chat) ? data.chat : [];
+                                                list.forEach(m => {
+                                                    try {
+                                                        // record id to prevent duplicates when live messages arrive
+                                                        if (m && m.id) contentEl._chatIds.add(m.id);
+                                                        const own = (m.from === (AppState.isDirector ? 'Director' : 'Viewer'));
+                                                        appendChatMessage(m, { own });
+                                                    } catch (e) {}
+                                                });
+                                            } catch (e) {}
+                                        }).catch(err => {
+                                            try { console.warn('Failed to load chat history', err); } catch (e) {}
+                                        });
+                                    }
+                                } catch (e) {}
+
+                                // role selector + stored preference
+                                const roleRow = document.createElement('div');
+                                roleRow.style.display = 'flex';
+                                roleRow.style.gap = '8px';
+                                roleRow.style.alignItems = 'center';
+                                roleRow.style.marginBottom = '8px';
+
+                                const roleLabel = document.createElement('div');
+                                roleLabel.textContent = 'Role:';
+                                roleLabel.style.fontSize = '0.85rem';
+                                roleLabel.style.color = 'var(--text-secondary)';
+                                roleRow.appendChild(roleLabel);
+
+                                const roleSelect = document.createElement('select');
+                                roleSelect.className = 'chat-role-select';
+                                ['Pastor','Worship Leader','Production','Musician'].forEach(r => {
+                                    const o = document.createElement('option'); o.value = r; o.textContent = r; roleSelect.appendChild(o);
+                                });
+                                roleRow.appendChild(roleSelect);
+                                contentEl.appendChild(roleRow);
+
+                                // load saved role preference
+                                const roleKey = `chat_role_${AppState.sessionCode || 'global'}`;
+                                try { const saved = localStorage.getItem(roleKey); if (saved) roleSelect.value = saved; } catch(e){}
+                                roleSelect.addEventListener('change', () => { try { localStorage.setItem(roleKey, roleSelect.value); } catch(e){} });
+
+                                const form = document.createElement('div');
+                                form.className = 'chat-input';
+                                form.style.display = 'flex';
+                                form.style.gap = '6px';
+
+                                const input = document.createElement('input');
+                                input.type = 'text';
+                                input.placeholder = 'Send a message to session';
+                                input.className = 'chat-input-field';
+                                input.style.flex = '1 1 auto';
+
+                                const sendBtn = document.createElement('button');
+                                sendBtn.className = 'btn btn-primary';
+                                sendBtn.textContent = 'Send';
+
+                                form.appendChild(input);
+                                form.appendChild(sendBtn);
+                                contentEl.appendChild(form);
+
+                                function appendChatMessage(m, opts = {}) {
+                                    try {
+                                        if (!m) return;
+                                        // normalize message object: ensure we use server message object shape
+                                        const msg = m;
+
+                                        // If server id present and already seen, skip (dedupe)
+                                        if (msg.id && contentEl._chatIds.has(msg.id)) return;
+
+                                        // If this message is a server echo for a pending local message, reconcile
+                                        if (msg.clientTempId && contentEl._pendingMap && contentEl._pendingMap[msg.clientTempId]) {
+                                            // replace pending element with the canonical server message
+                                            const pendingEl = contentEl._pendingMap[msg.clientTempId];
+                                            pendingEl.classList.remove('pending');
+                                            try { pendingEl.dataset.msgId = msg.id; } catch (e) {}
+                                            // update contents
+                                            try {
+                                                const meta = pendingEl.querySelector('.chat-meta');
+                                                if (meta) meta.textContent = `${msg.from || msg.role || 'User'}` + (msg.role ? ` • ${msg.role}` : '');
+                                                const body = pendingEl.querySelector('.chat-body'); if (body) body.textContent = msg.text || '';
+                                            } catch (e) {}
+                                            // mark id as seen and remove pending mapping
+                                            if (msg.id) contentEl._chatIds.add(msg.id);
+                                            delete contentEl._pendingMap[msg.clientTempId];
+                                            return;
+                                        }
+
+                                        // Create element for new message
+                                        const el = document.createElement('div');
+                                        el.className = 'chat-msg';
+                                        const roleClass = msg.role ? `role-${msg.role.toLowerCase().replace(/\s+/g,'-')}` : '';
+                                        if (roleClass) el.classList.add(roleClass);
+                                        if (opts.own) el.classList.add('own');
+
+                                        // meta line
+                                        const meta = document.createElement('div'); meta.className = 'chat-meta'; meta.style.fontSize = '0.75rem'; meta.style.color = 'var(--text-secondary)'; meta.style.marginBottom = '4px';
+                                        meta.textContent = `${msg.from || msg.role || 'User'}` + (msg.role ? ` • ${msg.role}` : '');
+                                        el.appendChild(meta);
+                                        const body = document.createElement('div'); body.className = 'chat-body'; body.textContent = msg.text || '';
+                                        el.appendChild(body);
+
+                                        // attach identifiers when present
+                                        if (msg.id) {
+                                            try { el.dataset.msgId = msg.id; } catch (e) {}
+                                            contentEl._chatIds.add(msg.id);
+                                        }
+                                        if (msg.clientTempId && !msg.id) {
+                                            // pending local message (client-side temporary id)
+                                            try { el.dataset.tempId = msg.clientTempId; } catch (e) {}
+                                            el.classList.add('pending');
+                                            contentEl._pendingMap[msg.clientTempId] = el;
+                                        }
+
+                                        msgs.appendChild(el);
+                                        msgs.scrollTop = msgs.scrollHeight;
+                                    } catch (e) {}
+                                }
+
+                                // expose helper for external message arrival
+                                contentEl._appendChatMessage = appendChatMessage;
+
+                                sendBtn.addEventListener('click', () => {
+                                    try {
+                                        const text = (input.value || '').trim();
+                                        if (!text) return;
+                                        const role = roleSelect.value || 'Musician';
+                                        // create a client-side temp id so we can show the message immediately and reconcile
+                                        const clientTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+                                        const payload = { type: 'chat:message', session: AppState.sessionCode, from: AppState.isDirector ? 'Director' : 'Viewer', role, text, clientTempId };
+                                        try {
+                                            // append pending message locally immediately
+                                            appendChatMessage(payload, { own: true });
+                                            if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify(payload));
+                                            else showToast('Not connected to server', 900);
+                                        } catch (e) { showToast('Failed to send message', 900); }
+                                        input.value = '';
+                                    } catch (e) {}
+                                });
+
+                                input.addEventListener('keypress', (e) => {
+                                    if (e.key === 'Enter') sendBtn.click();
+                                });
+                            } catch (e) {}
+                        }
+                    };
+                    // chat module is rendered into Live view instead of the sidebar
+                } catch (e) {}
+                // subscribe to page creation events (if supported)
+                if (typeof window._pageManager.on === 'function') {
+                    try { window._pageManager.on('pages:created', () => { try { window._sidebarManager.renderModules(); } catch(e){} }); } catch(e){}
+                    try { window._pageManager.on('deserialized', () => { try { window._sidebarManager.renderModules(); } catch(e){} }); } catch(e){}
+                    // when a single page's thumbnail is ready, update just that thumb
+                    try { window._pageManager.on('page:thumb', ({ pageId, thumb }) => { try { window._sidebarManager.updateThumb(pageId, thumb); flashThumb(pageId); } catch(e){} }); } catch(e){}
+                    // when an annotation changes, notify the sidebar (visual cue)
+                    try { window._pageManager.on('page:annotation', ({ pageId }) => { try { flashThumb(pageId); } catch(e){} }); } catch(e){}
+                    // lightweight combined event emitted when either thumb or annotation updates
+                    try { window._pageManager.on('page:updated', ({ pageId, page }) => { try { if (page && page.thumb) window._sidebarManager.updateThumb(pageId, page.thumb); flashThumb(pageId); } catch(e){} }); } catch(e){}
+                }
+            } catch (e) {}
+        }
+    } catch (e) { console.warn('PageManager init failed', e); }
 
     // Restore any saved currentSession (demo persistence). This helps preserve director/attendee state across reloads.
     try {
@@ -1287,6 +2209,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const joinBtn = document.getElementById('join-session-btn');
     if (joinBtn) joinBtn.addEventListener('click', joinSession);
+
+    // Ensure the create/join functions are available on window for inline onclicks
+    try {
+        window.createSession = createSession;
+        window.joinSession = joinSession;
+        // also set inline attributes as a last-resort fallback
+        if (createBtn && !createBtn.getAttribute('onclick')) createBtn.setAttribute('onclick', 'createSession()');
+        if (joinBtn && !joinBtn.getAttribute('onclick')) joinBtn.setAttribute('onclick', 'joinSession()');
+    } catch (e) {}
 
     const sessionInput = document.getElementById('session-code-input');
     if (sessionInput) {
@@ -1368,6 +2299,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const annotationBtn = document.getElementById('annotation-btn');
     if (annotationBtn) annotationBtn.addEventListener('click', toggleAnnotationMode);
+
+    // Initialize the annotation toolbar (color, undo, clear)
+    try { initAnnotationToolbar(); } catch (e) { console.warn('initAnnotationToolbar failed', e); }
+
+    // initAnnotationToolbar implementation
+    function initAnnotationToolbar() {
+        const toolbar = document.getElementById('annotation-toolbar');
+        if (!toolbar) return;
+        const colorInput = document.getElementById('annotation-color');
+        const undoBtn = document.getElementById('annotation-undo');
+        const clearBtn = document.getElementById('annotation-clear');
+
+        if (colorInput) {
+            colorInput.addEventListener('input', (e) => {
+                try { ANNOTATION_CONFIG.strokeStyle = e.target.value; } catch (err) {}
+            });
+        }
+        if (undoBtn) {
+            undoBtn.addEventListener('click', (e) => {
+                try { const ok = undoLastStroke(); if (ok) showToast('Undid last stroke', 900); else showToast('Nothing to undo', 900); } catch (err) {}
+            });
+        }
+        if (clearBtn) {
+            clearBtn.addEventListener('click', (e) => {
+                if (!confirm('Clear all annotations on this page?')) return;
+                try { const ok = clearPageAnnotations(); if (ok) showToast('Cleared annotations', 900); } catch (err) {}
+            });
+        }
+    }
     
     // Annotation drawing
     const annotationCanvas = document.getElementById('annotation-canvas');
@@ -1377,6 +2337,12 @@ document.addEventListener('DOMContentLoaded', function() {
         annotationCanvas.addEventListener('mouseup', stopDrawing);
         annotationCanvas.addEventListener('mouseout', stopDrawing);
     }
+
+    // Ensure toolbar reflects PageManager availability on load
+    try {
+        const toolbar = document.getElementById('annotation-toolbar');
+        if (toolbar) toolbar.hidden = true;
+    } catch (e) {}
     
     // Touch support for annotations
     if (annotationCanvas) {
@@ -1460,3 +2426,8 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error('Initialization error in app.js DOMContentLoaded:', err);
     }
 });
+
+// Keep right dock columns responsive to window resizes
+window.addEventListener('resize', () => { try { adjustRightDockColumns(); } catch (e) {} });
+// Also call once at load to set initial layout
+try { adjustRightDockColumns(); } catch (e) {}
