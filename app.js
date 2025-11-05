@@ -739,6 +739,8 @@ function initLiveResizer() {
 // side-by-side based on available width. This helps when CSS minmax
 // behavior alone doesn't produce the desired number of columns.
 function adjustRightDockColumns(minColWidth = 140) {
+    // Diagnostic guard: if suppression flag set, skip recalculation.
+    if (typeof _suppressRightDockAdjust !== 'undefined' && _suppressRightDockAdjust) return;
     try {
         const rightDock = document.querySelector('.live-right');
         if (!rightDock) return;
@@ -747,6 +749,7 @@ function adjustRightDockColumns(minColWidth = 140) {
         const rect = rightDock.getBoundingClientRect();
         const available = Math.max(0, rect.width - 12); // account for padding/gap
         const cols = Math.max(1, Math.floor(available / minColWidth));
+        // Only update grid-template-columns (avoid other layout mutations)
         rightDock.style.gridTemplateColumns = `repeat(${cols}, minmax(${Math.max(96, Math.floor(minColWidth*0.8))}px, 1fr))`;
     } catch (e) {}
 }
@@ -765,6 +768,35 @@ function updateLiveOverlayInteractivity() {
             }
         });
     } catch (e) {}
+}
+
+// Debug helper: log boundingClientRect for key layout elements and briefly outline them.
+// Temporary: used to diagnose layout changes when toggling orientation.
+function debugLogLayout(tag) {
+    try {
+        const elems = {
+            wrapper: document.querySelector('.live-pages-wrapper'),
+            pages: document.getElementById('live-pages'),
+            right: document.querySelector('.live-right'),
+            firstPage: document.querySelector('.live-page-wrapper')
+        };
+        const info = {};
+        Object.keys(elems).forEach(k => {
+            const el = elems[k];
+            if (!el) { info[k] = null; return; }
+            const r = el.getBoundingClientRect();
+            info[k] = { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+            // briefly outline the element so it's visible in the page
+            try {
+                const prev = el.style.outline || '';
+                el.style.outline = '2px solid rgba(255,0,0,0.6)';
+                setTimeout(() => { try { el.style.outline = prev; } catch (e) {} }, 900);
+            } catch (e) {}
+        });
+        console.groupCollapsed(`LAYOUT DEBUG: ${tag}`);
+        console.table(info);
+        console.groupEnd();
+    } catch (e) { console.warn('debugLogLayout failed', e); }
 }
 
 // Render the chat UI into the Live view chat module (#live-chat-module .module-content)
@@ -1562,6 +1594,10 @@ function generatePageThumbnail(chart, pageNumber = 1, maxWidth = 300) {
 
 // Initialize SortableJS on the charts grid for touch-friendly drag/reorder
 let _sortableInstance = null;
+// When true, avoid running the expensive/DOM-mutation right-dock column
+// recalculation while we're toggling orientation. This is a temporary
+// test hook to diagnose layout shifts caused by adjustRightDockColumns().
+let _suppressRightDockAdjust = false;
 function initSortable() {
     const grid = document.getElementById('charts-grid');
     if (!grid) return;
@@ -1821,6 +1857,7 @@ function prevChart() {
 async function switchToMode(mode) {
     // Normalize legacy 'edit' mode to live since Edit mode is removed; repurpose edit button as orientation toggle
     if (mode === 'edit') mode = 'live';
+    const prevMode = AppState.viewMode; // remember previous mode so we can make sensible defaults
     AppState.viewMode = mode;
     
     const editView = document.getElementById('edit-view');
@@ -1838,6 +1875,10 @@ async function switchToMode(mode) {
         if (liveView) liveView.classList.add('active');
         if (liveBtn) liveBtn.classList.add('active');
         stopOrganizeTicker();
+        // If we're switching from Organize to Live (e.g. double-click open),
+        // default to vertical orientation so users land in the expected
+        // stacked pages view rather than horizontal which can be surprising.
+        try { if (prevMode === 'organize') setLiveOrientation(false); } catch (e) {}
         // If director, persist current organize ordering to server so viewers will be updated
         if (AppState.isDirector) {
             try {
@@ -1876,8 +1917,15 @@ function setLiveOrientation(isHorizontal) {
             if (editBtn) editBtn.classList.remove('active');
             localStorage.setItem('liveOrientation', 'vertical');
         }
-        // columns might need recalculation after layout change
-        try { adjustRightDockColumns(); } catch (e) {}
+        // Temporarily suppress immediate right-dock recalculation which can
+        // trigger layout reflows that push the dock; instead schedule a
+        // single recalculation shortly after the orientation change to
+        // allow the browser to finish layout.
+        try {
+            _suppressRightDockAdjust = true;
+            // allow layout to settle, then run one recalculation
+            requestAnimationFrame(() => setTimeout(() => { try { _suppressRightDockAdjust = false; adjustRightDockColumns(); } catch(e) { _suppressRightDockAdjust = false; } }, 200));
+        } catch (e) { _suppressRightDockAdjust = false; }
     } catch (e) {}
 }
 
@@ -1885,13 +1933,20 @@ function toggleLiveOrientation() {
     try {
         const pages = document.getElementById('live-pages');
         if (!pages) return;
+        // Debug: log layout before toggle
+        try { if (typeof debugLogLayout === 'function') debugLogLayout('before-toggle'); } catch (e) {}
         const isHoriz = pages.classList.toggle('horizontal');
         const editBtn = document.getElementById('edit-mode-btn');
         if (editBtn) {
             if (isHoriz) editBtn.classList.add('active'); else editBtn.classList.remove('active');
         }
         localStorage.setItem('liveOrientation', isHoriz ? 'horizontal' : 'vertical');
-        try { adjustRightDockColumns(); } catch (e) {}
+        try {
+            _suppressRightDockAdjust = true;
+            requestAnimationFrame(() => setTimeout(() => { try { _suppressRightDockAdjust = false; adjustRightDockColumns(); } catch(e) { _suppressRightDockAdjust = false; } }, 200));
+        } catch (e) { _suppressRightDockAdjust = false; }
+        // Debug: log layout after toggle (after a frame so styles applied)
+        try { requestAnimationFrame(() => { try { if (typeof debugLogLayout === 'function') debugLogLayout('after-toggle'); } catch (e) {} }); } catch (e) {}
     } catch (e) {}
 }
 
