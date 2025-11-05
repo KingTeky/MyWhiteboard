@@ -1917,6 +1917,28 @@ function setLiveOrientation(isHorizontal) {
             if (editBtn) editBtn.classList.remove('active');
             localStorage.setItem('liveOrientation', 'vertical');
         }
+        // Constrain the pages area to the remaining space so a wide
+        // horizontal page won't expand the live container and push the
+        // right dock off-screen. Calculate available width and set a
+        // max-width on the pages wrapper while horizontal. Remove when
+        // returning to vertical.
+        try {
+            const rightDock = document.querySelector('.live-right');
+            const splitter = document.getElementById('live-splitter');
+            const pagesWrapper = document.querySelector('.live-pages-wrapper');
+            const pagesEl = document.getElementById('live-pages');
+            if (isHorizontal) {
+                const rightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
+                const splitW = splitter ? Math.round(splitter.getBoundingClientRect().width) : 10;
+                const occupy = rightW + splitW + 24; // extra gutter
+                if (pagesWrapper) pagesWrapper.style.maxWidth = `calc(100% - ${occupy}px)`;
+                if (pagesEl) pagesEl.style.maxWidth = `calc(100% - ${occupy}px)`;
+            } else {
+                if (pagesWrapper) pagesWrapper.style.maxWidth = '';
+                if (pagesEl) pagesEl.style.maxWidth = '';
+            }
+        } catch (e) {}
+
         // Temporarily suppress immediate right-dock recalculation which can
         // trigger layout reflows that push the dock; instead schedule a
         // single recalculation shortly after the orientation change to
@@ -1941,6 +1963,25 @@ function toggleLiveOrientation() {
             if (isHoriz) editBtn.classList.add('active'); else editBtn.classList.remove('active');
         }
         localStorage.setItem('liveOrientation', isHoriz ? 'horizontal' : 'vertical');
+        // Apply same safe max-width constraint as above so toggling via
+        // UI also prevents the pages container from expanding into the dock
+        try {
+            const rightDock = document.querySelector('.live-right');
+            const splitter = document.getElementById('live-splitter');
+            const pagesWrapper = document.querySelector('.live-pages-wrapper');
+            const pagesEl = document.getElementById('live-pages');
+            if (isHoriz) {
+                const rightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
+                const splitW = splitter ? Math.round(splitter.getBoundingClientRect().width) : 10;
+                const occupy = rightW + splitW + 24;
+                if (pagesWrapper) pagesWrapper.style.maxWidth = `calc(100% - ${occupy}px)`;
+                if (pagesEl) pagesEl.style.maxWidth = `calc(100% - ${occupy}px)`;
+            } else {
+                if (pagesWrapper) pagesWrapper.style.maxWidth = '';
+                if (pagesEl) pagesEl.style.maxWidth = '';
+            }
+        } catch (e) {}
+
         try {
             _suppressRightDockAdjust = true;
             requestAnimationFrame(() => setTimeout(() => { try { _suppressRightDockAdjust = false; adjustRightDockColumns(); } catch(e) { _suppressRightDockAdjust = false; } }, 200));
