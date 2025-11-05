@@ -96,7 +96,11 @@ body {
 /* Container */
 .container {
     padding-top: 4rem;
-    margin-bottom: 4rem;
+    /* Center content and limit width so header and cards don't stretch full-width */
+    max-width: 1200px;
+    margin: 0 auto 4rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
 }
 
 /* Horizontal live layout: when the live pages container has the horizontal
