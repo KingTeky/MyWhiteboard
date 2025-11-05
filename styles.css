@@ -96,11 +96,7 @@ body {
 /* Container */
 .container {
     padding-top: 4rem;
-    /* Center content and limit width so header and cards don't stretch full-width */
-    max-width: 1200px;
-    margin: 0 auto 4rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
+    margin-bottom: 4rem;
 }
 
 /* Horizontal live layout: when the live pages container has the horizontal
@@ -505,18 +501,6 @@ header .theme-toggle,
     top: 12px;
     right: 12px;
     z-index: 20;
-}
-
-/* Landing page: center the brand/title and tagline horizontally while
-   keeping the theme toggle positioned top-right. This targets only the
-   landing page header so other page headers (upload/viewer) keep their
-   original layout. */
-#landing-page > .container > header {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding-bottom: 0.5rem; /* visual breathing room above the cards */
 }
 
 /* Small session code display under the viewer controls */
