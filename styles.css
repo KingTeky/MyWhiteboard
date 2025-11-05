@@ -123,9 +123,19 @@ body {
 .live-pages.horizontal .live-page-wrapper {
     margin-bottom: 0;
     flex: 0 0 auto;
-    min-width: 60%; /* ensure pages are readable; adjust as needed */
-    max-width: 1000px;
+    /* use fixed pixel constraints in horizontal mode to avoid percent-based
+       min-widths that can cause the pages container to grow and push the
+       right dock. These values keep pages readable while allowing many
+       to sit in a row and enable horizontal scrolling when needed. */
+    min-width: 320px;
+    max-width: 900px;
 }
+
+/* Live-only safeguards: scope overflow/min-width rules to the Live view so
+   Organize and other pages are not affected by horizontal-mode experiments. */
+#live-view .live-pages-wrapper { min-width: 0; overflow: hidden; box-sizing: border-box; }
+#live-view .live-pages.horizontal { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+#live-view .live-pages.horizontal .live-page-wrapper { min-width: 320px; max-width: 900px; }
 
 /* Hide the sidebar on the landing page to avoid an extra frame appearing
    under the action cards. The sidebar is intended for the viewer/editor
