@@ -1928,7 +1928,13 @@ function setLiveOrientation(isHorizontal) {
             const pagesWrapper = document.querySelector('.live-pages-wrapper');
             const pagesEl = document.getElementById('live-pages');
             if (isHorizontal) {
-                const rightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
+                // cap the right dock contribution so a large grid or max-width
+                // doesn't claim the majority of the viewport (observed as 920px
+                // in screenshots). Use the actual width but limit to a reasonable
+                // portion of the viewport so pages remain usable.
+                const rawRightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
+                const maxAllowedRight = Math.min(Math.round(window.innerWidth * 0.42), 640); // don't let dock exceed ~42% or 640px
+                const rightW = Math.min(rawRightW, maxAllowedRight);
                 const splitW = splitter ? Math.round(splitter.getBoundingClientRect().width) : 10;
                 const occupy = rightW + splitW + 24; // extra gutter
                 if (pagesWrapper) pagesWrapper.style.maxWidth = `calc(100% - ${occupy}px)`;
@@ -1971,7 +1977,9 @@ function toggleLiveOrientation() {
             const pagesWrapper = document.querySelector('.live-pages-wrapper');
             const pagesEl = document.getElementById('live-pages');
             if (isHoriz) {
-                const rightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
+                const rawRightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
+                const maxAllowedRight2 = Math.min(Math.round(window.innerWidth * 0.42), 640);
+                const rightW = Math.min(rawRightW, maxAllowedRight2);
                 const splitW = splitter ? Math.round(splitter.getBoundingClientRect().width) : 10;
                 const occupy = rightW + splitW + 24;
                 if (pagesWrapper) pagesWrapper.style.maxWidth = `calc(100% - ${occupy}px)`;
