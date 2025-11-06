@@ -505,6 +505,66 @@ input[type="text"]::placeholder {
     margin-left: auto;
 }
 
+/* Header toggle buttons for floating chat/thumbnails */
+#chat-toggle-btn, #thumbs-toggle-btn {
+    position: relative;
+}
+
+/* Unread pulse glow for chat button: soothing orange translucent glow */
+.chat-unread {
+    box-shadow: 0 0 0px rgba(0,0,0,0);
+    animation: chat-pulse 2000ms infinite;
+}
+@keyframes chat-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255,159,67,0.0); }
+    40% { box-shadow: 0 0 18px 6px rgba(255,159,67,0.12); }
+    80% { box-shadow: 0 0 6px 2px rgba(255,159,67,0.06); }
+    100% { box-shadow: 0 0 0 0 rgba(255,159,67,0.0); }
+}
+
+/* Floating window base (chat & thumbnails) */
+.floating-window {
+    position: fixed;
+    left: 60px;
+    top: 80px;
+    width: 360px;
+    max-width: calc(100vw - 40px);
+    height: 460px;
+    background: var(--card-background);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(2,6,23,0.2);
+    z-index: 12000;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.floating-window.hidden { display: none; }
+
+.floating-window .floating-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.02), transparent);
+    cursor: move; /* indicate draggable */
+    gap: 8px;
+}
+
+.floating-window .floating-title { font-weight: 700; font-size: 0.95rem; color: var(--text-primary); }
+.floating-window .floating-actions { display:flex; gap:6px; align-items:center; }
+.floating-window .floating-content { padding: 8px; overflow: auto; flex: 1 1 auto; }
+
+.floating-close-btn { background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px; }
+.floating-close-btn:hover { background: var(--hover); }
+
+/* Small handle when dragging to keep pointer interactions smooth */
+.floating-window.dragging { opacity: 0.98; transform: translateZ(0); }
+
+/* Make the thumbnails floating window a bit wider by default */
+.floating-window.thumbs { width: 420px; height: 420px; }
+
 /* Separate the leave button from the other mode controls to reduce accidental clicks */
 .viewer-controls #leave-session-btn {
     margin-left: 12px; /* gap between mode buttons and leave */
@@ -600,222 +660,39 @@ header .theme-toggle,
 /* Live layout defaults to a single responsive flow; column behavior is
    managed via JS grid calculations and responsive CSS rules. */
 
-/* Right column containing modules (chat, thumbs). Provide an initial
-   width and allow JS to override via inline flex when resizing. */
-.live-right {
-    /* Right dock uses the other half of the available width by default.
-       Use grid inside to place modules; allow a modest minimum so modules
-       remain usable. JS can still override sizing via inline styles. */
-    flex: 1 1 50%;
-    min-width: 300px;
-    max-width: none;
-    overflow: visible; /* allow modules to sit freely without being clipped */
-    padding: 8px 12px;
-    box-sizing: border-box;
-    display: grid;
-    /* let modules wrap into columns based on available dock width */
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    grid-auto-rows: min-content;
-    gap: 12px;
-    align-content: start;
-    justify-items: stretch;
-}
-
-/* Stronger layout guarantees for right dock children so modules can sit
-   side-by-side: ensure modules don't span full-width and respect grid
-   column sizing. This override helps when other rules force 100% width. */
-.live-right > .live-module {
-    min-width: 120px;
-    max-width: none;
-    width: auto !important;
-    align-self: start;
-}
-
-/* Make the right column independent from the left scroll: sticky so it
-   stays visible while the pages area scrolls. The height is bounded to
-   allow internal scrolling for chat and thumbnails. */
-.live-right {
-    position: sticky;
-    top: 76px; /* below the page header */
-    align-self: flex-start;
-    /* let content flow; avoid internal max-height to prevent internal scrolling */
-    max-height: none;
-}
-
-/* Left dock removed: Live view uses only the pages area + right dock */
-
-.live-module-dock { display: flex; flex-direction: column; gap: 12px; }
-
-/* When a dock is the right live dock, prefer grid layout so modules
-   can sit side-by-side. This selector is more specific than the generic
-   .live-module-dock and forces grid for the right dock. */
-aside.live-right.live-module-dock,
-.live-right.live-module-dock {
-    display: grid !important;
-}
-
-/* Module content layout: make the thumbnails module render as a responsive
-   grid of thumbnails (2-4 columns depending on width). Chat module remains
-   a stacked column above/below thumbnails and can be reordered via drag.
+/* (Removed: right-dock and splitter styling)
+   The live view now uses a single-column layout on desktop and floating
+   windows are used for chat/thumbnails. Rules that targeted the right
+   dock (`.live-right`, `aside.live-right`, `.live-module-dock`) and the
+   draggable splitter were removed because the markup was removed from
+   `index.html` and the related JS resizer was deleted.
 */
-.module-content.live-thumbs,
-.live-right .module-content.live-thumbs {
-     /* Force thumbnails inside docks to render as a responsive grid.
-         Use a smaller min width so 2-4 columns appear depending on dock width. */
-    display: grid !important;
-    /* make thumbnails smaller by default (about 40% smaller than previous 200px-ish defaults) */
-    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)) !important;
-    gap: 12px !important;
-    align-items: start;
-}
 
-/* Ensure the thumbnail grid flows into multiple columns and keeps items
-   compact. Make each thumbnail content cell allow multiple columns. */
-.module-content.live-thumbs {
-    grid-auto-rows: min-content !important;
-    grid-auto-flow: row dense !important;
-}
-
-.module-content.live-thumbs .live-thumb {
-    width: auto !important;
-    display: block !important;
-}
-
-/* Aggressive override: force thumbnails module to be a compact grid inside
-   the right dock and reduce thumbnail size so multiple columns appear.
-   Use high specificity and !important to beat any legacy rules. */
-.live-right #live-thumbs-module .module-content,
-.live-right .module-content.live-thumbs {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)) !important;
-    gap: 10px !important;
-    padding: 8px !important;
-    align-items: start !important;
-}
-
-.live-right #live-thumbs-module .module-content .live-thumb,
-.live-right .module-content.live-thumbs .live-thumb {
-    padding: 6px !important;
-    border-radius: 6px !important;
-    width: auto !important;
-    max-width: 120px !important;
-}
-
-/* Force a row-first layout for thumbnails in Live's right dock on wide
-   viewports: prefer 4 thumbnails per row, then wrap to the next row. This
-   overrides earlier auto-fit behavior which could create narrow column stacks
-   when the dock had extra vertical space. Keep a responsive fallback for
-   small screens. */
+/* Desktop: prefer a single-column Live experience. Hide the right dock and
+    splitter so the only visible content under the header is the scrollable
+    charts area. Floating windows (chat/thumbnails) remain available via the
+    header toggles. */
 @media (min-width: 980px) {
-    .live-right .module-content.live-thumbs {
-        grid-auto-flow: row;
-        grid-template-columns: repeat(4, minmax(84px, 1fr)) !important;
-        grid-auto-rows: min-content;
-        justify-items: center;
-    }
+     /* Ensure Live view fills the available viewer space so its internal
+         container behaves as a flex child and the pages area can scroll. */
+     #live-view.view.active { display: flex; flex: 1 1 auto; }
 
-    .live-right .module-content.live-thumbs .live-thumb {
-        max-width: 140px !important;
-        width: 100% !important; /* let cell sizing determine thumb width */
-    }
-}
+     .live-container {
+          /* Use full available width so the pages area can expand. Do not
+              constrain the live container to a centered max-width when the
+              design goal is a single scrollable column. */
+          width: 100%;
+          max-width: none;
+          margin-left: 0;
+          margin-right: 0;
+          justify-content: flex-start;
+     }
 
-/* Reduce internal canvas/img size so thumbnails don't stretch full width */
-.live-right .live-thumb img, .live-right .live-thumb canvas {
-    width: 100% !important;
-    height: auto !important;
-    display: block !important;
-}
+     /* Make the pages wrapper occupy the full horizontal space. Use
+         !important to override any inline sizing applied by JS. */
+     .live-pages-wrapper { flex: 1 1 100% !important; min-width: 0; }
 
-/* Prevent the later generic .live-thumbs rule from forcing an unwanted
-   scrollbar on module instances (module-content.live-thumbs). These
-   elements are intended to be free-flowing grids inside a dock. */
-.module-content.live-thumbs {
-    overflow: visible !important;
-    max-height: none !important;
-}
-
-.module-content.live-thumbs .live-thumb {
-    display: block;
-    padding: 8px;
-    background: var(--background);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    /* ensure thumbnail items stretch to fill each grid cell and do not
-       collapse to narrow vertical blocks */
-    width: 100%;
-}
-
-/* Ensure chat module content scrolls independently inside the right column */
-.module-content .chat-messages {
-    /* Make chat messages scroll within the module content area and
-       use available vertical space inside the dock. The module-content
-       element is inside a dock with max-height set, so chat will scroll.
-       Use a calc so the input row remains visible. */
-    max-height: calc(100vh - 260px);
-    overflow-y: auto;
-}
-
-/* Splitter between pages and thumbnails for adjustable sizing */
-.live-splitter {
-    width: 10px;
-    cursor: col-resize;
-    background: transparent;
-    flex: 0 0 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.live-splitter:before {
-    content: '';
-    width: 2px;
-    height: 36px;
-    background: rgba(0,0,0,0.06);
-    border-radius: 2px;
-    transition: background-color 150ms ease, height 150ms ease;
-}
-.live-splitter:hover:before { background: rgba(0,0,0,0.12); height: 44px; }
-
-/* When vertical stacking on small screens, splitter becomes horizontal */
-@media (max-width: 720px) {
-    .live-container { flex-direction: column; }
-    .live-splitter { width: 100%; height: 10px; cursor: row-resize; flex: 0 0 10px; }
-    .live-splitter:before { width: 36px; height: 2px; }
-}
-
-/* Constrain and center the live container so the pages and dock share the
-   viewport symmetrically on larger screens. The container remains full-width
-   on small viewports due to the media query above. */
-@media (min-width: 980px) {
-     /* Make the Live view a normal block container (not flex) when ACTIVE on
-         desktop. Non-active live view must remain hidden (handled by .view).
-         This avoids flex side-effects and keeps views isolated. */
-     #live-view.view.active { display: block; }
-    .live-container {
-        /* Constrain the live area and center it. Use width:auto so the
-           flex children determine the natural width (then max-width limits
-           the overall size). Margin auto centers the container inside the
-           viewer. */
-        max-width: 1200px;
-        margin-left: auto;
-        margin-right: auto;
-          /* Constrain width and center using margin auto; prefer a deterministic
-              width calculation on desktop for consistent centering. */
-          width: min(1200px, 100%);
-          justify-content: center; /* center children inside its own row */
-        /* Prevent the container from stretching to full width as a flex item */
-        flex: 0 0 auto;
-          margin-left: auto;
-          margin-right: auto;
-    }
-
-    /* On wide screens prefer an even split by default so pages and the
-       right dock each take half the available (constrained) width. JS
-       splitter will still override inline flex-basis when the user resizes. */
-    .live-pages-wrapper, .live-right {
-        flex: 0 1 50%;
-        min-width: 0; /* allow each side to shrink if needed */
-    }
+     /* Floating panels operate independently as fixed-position windows. */
 }
 
 /* Main scrollable chart area */
@@ -869,9 +746,7 @@ aside.live-right.live-module-dock,
 .live-module .module-header { cursor: grab; }
 
 /* Modules should take full width in narrow docks/mobile */
-@media (max-width: 980px) {
-    .live-right .live-module { width: 100%; min-width: 0; }
-}
+/* (Removed: right-dock specific mobile rules) */
 
 /* Visual for ghost element while dragging */
 .sortable-ghost {
@@ -1118,10 +993,15 @@ aside.live-right.live-module-dock,
     margin: 0;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    /* let the thumbnail area span the full card width instead of centering
+       everything — this prevents cards from looking vertically stretched
+       when titles/controls are present */
+    align-items: stretch;
+    justify-content: flex-start;
     gap: 0.5rem;
-    height: 200px;
+    min-height: 160px;   /* keep cards reasonably tall on small screens */
+    max-height: 320px;   /* avoid overly tall stretched cards */
+    height: auto;        /* allow card height to be determined by content */
     cursor: grab;
     transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
@@ -1197,6 +1077,37 @@ aside.live-right.live-module-dock,
 
 .chart-info p { font-size: 0.85rem; color: var(--text-secondary); margin: 0; }
 
+/* Organize-mode: rounded square cards (override generic chart-card rules)
+   Use aspect-ratio to make cards visually square on desktop while remaining
+   responsive. Grid layout inside the card puts the thumbnail in the flexing
+   area and the title/controls in a fixed row at the bottom. This keeps a
+   compact rounded-square appearance without changing other views. */
+#organize-view .chart-card {
+    aspect-ratio: 1 / 1;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    padding: 12px;
+    border-radius: 14px;
+    align-items: center;
+    justify-items: center;
+    gap: 8px;
+    width: 100%;
+    height: auto; /* let aspect-ratio control height */
+    min-height: 0;
+}
+
+#organize-view .chart-card .chart-thumbnail {
+    width: 84%;
+    height: auto;
+    max-height: 72%;
+    margin: 0;
+    background: transparent; /* prefer organize-specific preview background */
+}
+
+#organize-view .chart-card .chart-info {
+    padding-top: 6px;
+}
+
 /* Move controls for accessibility */
 .chart-move-controls {
     position: absolute;
@@ -1271,6 +1182,9 @@ aside.live-right.live-module-dock,
 .chart-card { position: relative; }
 
 .chart-card {
+    /* keep a second declaration compatible but not overriding height/flow
+       set above. Ensure cards remain clickable blocks and visually
+       consistent with other components. */
     background: var(--background);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1286,7 +1200,10 @@ aside.live-right.live-module-dock,
 
 .chart-thumbnail {
     width: 100%;
-    height: 200px;
+    /* Allow the thumbnail to size based on the Organize-specific preview
+       box when in `#organize-view`; otherwise be content-driven. Removing
+       the hard 200px height prevents cards from forcing a tall layout. */
+    height: auto;
     background: var(--surface);
     display: flex;
     align-items: center;

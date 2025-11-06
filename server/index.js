@@ -92,6 +92,8 @@ try {
 const sessionClients = new Map();
 // Map of sessionCode -> cleanup timer id (Node timeout)
 const cleanupTimers = new Map();
+// Map of sessionCode -> director disconnect grace timer id
+const directorDisconnectTimers = new Map();
 
 // Setup WebSocket server
 const wss = new WebSocket.Server({ server });
@@ -123,6 +125,14 @@ wss.on('connection', (ws, req) => {
                   ws.isDirector = true;
                   try { console.log(`WS subscribe: director connected for session ${code}`); } catch (e) {}
                   try { appendChatDebug(`director_connect session=${code} pid=${process.pid}`); } catch (e) {}
+                  // If a director disconnect timer was scheduled, cancel it - director returned
+                  try {
+                    if (directorDisconnectTimers.has(code)) {
+                      clearTimeout(directorDisconnectTimers.get(code));
+                      directorDisconnectTimers.delete(code);
+                      try { console.log(`Cleared director disconnect timer for session ${code}`); } catch (e) {}
+                    }
+                  } catch (e) {}
                 }
               } catch (e) {}
       }
@@ -210,13 +220,28 @@ wss.on('connection', (ws, req) => {
       // and disconnect remaining clients.
       if (ws.isDirector) {
         try { appendChatDebug(`director_disconnect session=${code}`); } catch (e) {}
-        // Close all remaining clients for this session
-        const remaining = sessionClients.get(code) || new Set();
-        remaining.forEach(c => {
-          try { c.close(); } catch (e) {}
-        });
-        try { sessionClients.delete(code); } catch (e) {}
-        try { deleteSession(code); } catch (e) {}
+        // Instead of deleting immediately, schedule a short grace period so
+        // transient network disconnects don't cause an immediate session removal.
+        try {
+          const GRACE_MS = parseInt(process.env.DIRECTOR_DISCONNECT_GRACE_MS || '30000', 10);
+          if (directorDisconnectTimers.has(code)) {
+            clearTimeout(directorDisconnectTimers.get(code));
+            directorDisconnectTimers.delete(code);
+          }
+          const tid = setTimeout(() => {
+            try {
+              // Close any remaining clients and delete session after grace
+              const remaining = sessionClients.get(code) || new Set();
+              remaining.forEach(c => { try { c.close(); } catch (e) {} });
+              try { sessionClients.delete(code); } catch (e) {}
+              try { deleteSession(code); } catch (e) {}
+              try { appendChatDebug(`director_disconnect_cleanup session=${code}`); } catch (e) {}
+            } catch (e) {}
+            if (directorDisconnectTimers.has(code)) directorDisconnectTimers.delete(code);
+          }, GRACE_MS);
+          directorDisconnectTimers.set(code, tid);
+          try { console.log(`WS director disconnected for session ${code}, scheduled deletion in ${GRACE_MS}ms`); } catch (e) {}
+        } catch (e) { try { deleteSession(code); } catch (err) {} }
         return;
       }
 
@@ -235,6 +260,9 @@ wss.on('connection', (ws, req) => {
 // Helper: remove session data and persist
 function deleteSession(code) {
   try {
+    try {
+      console.log(`deleteSession: removing session ${code}. store keys before delete: ${Object.keys(store).join(',')}`);
+    } catch (e) {}
     delete store[code];
     persist();
   } catch (e) {
@@ -248,11 +276,34 @@ function deleteSession(code) {
 function scheduleInactivityCleanup(code) {
   try {
     if (!store[code]) return;
-  const DELAY_MS = 35 * 60 * 1000; // 35 minutes
+    const DELAY_MS = 35 * 60 * 1000; // 35 minutes
 
     const clients = sessionClients.get(code) || new Set();
-    // If no connected clients, delete the session immediately per new policy.
+    // If no connected clients, normally we'd delete immediately. However,
+    // avoid deleting sessions that were just created and where the client
+    // hasn't had time to open the WebSocket yet. Use a short grace window
+    // for newly-created sessions to avoid race conditions between the
+    // HTTP create and the subsequent WS subscribe.
+    const NEW_SESSION_GRACE_MS = parseInt(process.env.NEW_SESSION_GRACE_MS || '5000', 10);
     if (clients.size === 0) {
+      const s = store[code] || {};
+      const age = s.lastActivity ? (Date.now() - s.lastActivity) : Number.POSITIVE_INFINITY;
+      if (age < NEW_SESSION_GRACE_MS) {
+        // schedule a one-shot re-check after the grace window
+        if (cleanupTimers.has(code)) { clearTimeout(cleanupTimers.get(code)); cleanupTimers.delete(code); }
+        const tid = setTimeout(() => {
+          try {
+            const clientsNow = sessionClients.get(code) || new Set();
+            if (clientsNow.size === 0) {
+              try { deleteSession(code); } catch (e) {}
+            }
+          } catch (e) {}
+          if (cleanupTimers.has(code)) cleanupTimers.delete(code);
+        }, NEW_SESSION_GRACE_MS);
+        cleanupTimers.set(code, tid);
+        return;
+      }
+      // otherwise proceed to immediate deletion
       try { deleteSession(code); } catch (e) {}
       return;
     }
@@ -356,6 +407,7 @@ app.post('/api/sessions', (req, res) => {
   const session = { code, directorToken, charts: [], chat: [], lastActivity: Date.now() };
   store[code] = session;
   persist();
+  try { console.log(`API: created session ${code}`); } catch (e) {}
   res.json({ code, directorToken });
 });
 
@@ -386,6 +438,7 @@ app.get('/api/sessions/:code', (req, res) => {
 app.post('/api/sessions/:code/charts', (req, res) => {
   const code = req.params.code.toUpperCase();
   const token = req.header('x-director-token');
+  try { console.log(`API: save charts for ${code} token=${token ? 'present' : 'absent'}`); } catch (e) {}
   const s = store[code];
   if (!s) return res.status(404).json({ error: 'not_found' });
   if (!token || token !== s.directorToken) return res.status(403).json({ error: 'forbidden' });
@@ -441,6 +494,7 @@ app.post('/api/sessions/:code/validate-token', (req, res) => {
 app.delete('/api/sessions/:code', (req, res) => {
   const code = req.params.code.toUpperCase();
   const token = req.header('x-director-token');
+  try { console.log(`API: delete session ${code} token=${token ? 'present' : 'absent'}`); } catch (e) {}
   const s = store[code];
   if (!s) return res.status(404).json({ error: 'not_found' });
   if (!token || token !== s.directorToken) return res.status(403).json({ error: 'forbidden' });

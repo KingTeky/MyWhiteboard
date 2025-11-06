@@ -104,28 +104,68 @@ function generateSessionCode() {
 
 function createSession() {
     console.log('createSession() called');
+    if (AppState.creatingSession) {
+        console.log('createSession: already in progress, ignoring duplicate call');
+        // return the existing creating promise if present
+        return AppState._creatingPromise || Promise.resolve();
+    }
+    AppState.creatingSession = true;
+
     // Try to create session server-side; fallback to client-only session if unavailable
-    (async () => {
-        try {
-            const res = await fetch(`${SERVER_BASE}/api/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-            if (res.ok) {
-                const j = await res.json();
-                AppState.sessionCode = j.code;
-                AppState.isDirector = true;
-                // keep director token in-memory only; do not persist to localStorage
-                AppState.directorToken = j.directorToken;
-            } else {
-                // fallback
+    const p = (async () => {
+            try {
+                const res = await fetch(`${SERVER_BASE}/api/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                let bodyText = '';
+                try { bodyText = await res.text(); } catch (e) { bodyText = ''; }
+                try { console.log('createSession: POST /api/sessions -> status=%s body=%s', res.status, bodyText); } catch (e) {}
+                if (res.ok) {
+                    // rewind the body we already consumed as text by parsing JSON from it
+                    let j = null;
+                    try { j = JSON.parse(bodyText); } catch (e) { j = null; }
+                    if (!j) {
+                        // if parsing failed, try to call res.json() as a fallback
+                        try { j = await res.json(); } catch (e) { j = null; }
+                    }
+                    if (j) {
+                        AppState.sessionCode = j.code;
+                        AppState.isDirector = true;
+                        AppState.directorToken = j.directorToken;
+                        try {
+                            localStorage.setItem(`session_${j.code}_directorToken`, j.directorToken);
+                            localStorage.setItem('session_current_code', j.code);
+                            localStorage.setItem('session_current_directorToken', j.directorToken);
+                            console.info('Persisted director token for session', j.code, j);
+                        } catch (e) {}
+
+                        // Ensure the live websocket is started so the director can subscribe
+                        // immediately. This prevents a race where the server believes there
+                        // are no connected clients and deletes the newly-created session.
+                        try { startLiveSocket(); } catch (e) {}
+
+                        // Immediately verify the session exists on the server
+                        try {
+                            const verify = await fetch(`${SERVER_BASE}/api/sessions/${j.code}`);
+                            let verifyBody = '';
+                            try { verifyBody = await verify.text(); } catch (e) { verifyBody = ''; }
+                            console.log('createSession: verify GET /api/sessions/%s -> status=%s body=%s', j.code, verify.status, verifyBody);
+                        } catch (e) { console.warn('createSession: failed to verify session existence', e); }
+                    } else {
+                        // parsing failed - fallback to client-only
+                        AppState.sessionCode = generateSessionCode();
+                        AppState.isDirector = true;
+                    }
+                } else {
+                    // fallback to client-only session
+                    AppState.sessionCode = generateSessionCode();
+                    AppState.isDirector = true;
+                }
+            } catch (e) {
+                // network/server unavailable - fallback to client-only session
                 AppState.sessionCode = generateSessionCode();
                 AppState.isDirector = true;
             }
-        } catch (e) {
-            // network/server unavailable - fallback to client-only session
-            AppState.sessionCode = generateSessionCode();
-            AppState.isDirector = true;
-        }
 
-    showPage('upload');
+        showPage('upload');
         const uploadCodeEl = document.getElementById('session-code-display');
         if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
         const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
@@ -141,7 +181,11 @@ function createSession() {
                 _ws.send(JSON.stringify(sub));
             }
         } catch (e) {}
-    })();
+    })().finally(() => { try { AppState.creatingSession = false; } catch (e) {} });
+    AppState._creatingPromise = p;
+    // clear stored promise when done
+    p.finally(() => { try { delete AppState._creatingPromise; } catch (e) {} });
+    return p;
 }
 
 function joinSession() {
@@ -282,47 +326,62 @@ function startSession() {
     })();
 }
 
-function leaveSession() {
-    if (confirm('Are you sure you want to leave this session?')) {
-        // Capture values for a possible server-side delete before we clear state
-        const serverCode = AppState.sessionCode;
-        const serverToken = AppState.directorToken;
+async function leaveSession() {
+    if (!confirm('Are you sure you want to leave this session?')) return;
 
-        // Reset state
-        // stop live socket if active
-        stopLiveSocket();
-        AppState.charts = [];
-        AppState.currentChartIndex = 0;
-        AppState.currentPageNumber = 1;
-        // Clear any persisted session data to ensure sessions are not left saved.
-        try {
-            if (serverCode) {
-                try { localStorage.removeItem(`session_${serverCode}`); } catch (e) {}
-                try { localStorage.removeItem(`session_${serverCode}_directorToken`); } catch (e) {}
-            }
-            try { localStorage.removeItem('currentSession'); } catch (e) {}
-        } catch (e) {}
-        AppState.sessionCode = null;
-        AppState.isDirector = false;
+    // Capture values for a possible server-side delete before we clear state
+    const serverCode = AppState.sessionCode;
+    const serverToken = AppState.directorToken;
 
-        // If this client was the director and a server-side token exists, ask server to delete the session immediately
+    // Stop live socket immediately
+    stopLiveSocket();
+
+    // If this client was the director and a server-side token exists, ask server to delete the session immediately
+    if (serverCode && serverToken) {
         try {
-            if (serverCode && serverToken) {
-                // best-effort fire-and-forget; do not block UI
-                fetch(`${SERVER_BASE}/api/sessions/${serverCode}`, {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json', 'x-director-token': serverToken }
-                }).catch(() => {});
+            const res = await fetch(`${SERVER_BASE}/api/sessions/${serverCode}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json', 'x-director-token': serverToken }
+            });
+            let bodyText = '';
+            try { bodyText = await res.text(); } catch (e) { bodyText = ''; }
+            try { console.log('DELETE /api/sessions/%s -> status=%s body=%s', serverCode, res.status, bodyText); } catch (e) {}
+            if (res.ok) {
+                showToast('Session deleted from server', 1600);
+            } else if (res.status === 403) {
+                showToast('Session delete forbidden (invalid director token)', 3000);
+            } else if (res.status === 404) {
+                showToast('Session not found on server (already deleted)', 2600);
+            } else {
+                showToast(`Failed to delete session on server (status ${res.status})`, 3000);
             }
-        } catch (e) {}
+        } catch (err) {
+            console.error('Failed to DELETE session:', err);
+            showToast('Failed to contact server to delete session', 2500);
+        }
+    }
+
+    // Reset state and clear persisted session data
+    AppState.charts = [];
+    AppState.currentChartIndex = 0;
+    AppState.currentPageNumber = 1;
+    try {
+        if (serverCode) {
+            try { localStorage.removeItem(`session_${serverCode}`); } catch (e) {}
+            try { localStorage.removeItem(`session_${serverCode}_directorToken`); } catch (e) {}
+        }
+        try { localStorage.removeItem('currentSession'); } catch (e) {}
+    } catch (e) {}
+    AppState.sessionCode = null;
+    AppState.isDirector = false;
+
     const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
     if (viewerCodeTextEl) viewerCodeTextEl.textContent = '';
-        const uploadCodeEl = document.getElementById('session-code-display');
-        if (uploadCodeEl) uploadCodeEl.textContent = '';
-        // Update UI to a neutral state (no director controls visible)
-        updateRoleUI();
-        showPage('landing');
-    }
+    const uploadCodeEl = document.getElementById('session-code-display');
+    if (uploadCodeEl) uploadCodeEl.textContent = '';
+    // Update UI to a neutral state (no director controls visible)
+    updateRoleUI();
+    showPage('landing');
 }
 
 // Page Navigation
@@ -502,31 +561,19 @@ function renderCurrentChart() {
 function renderLiveMode() {
     // Render all charts in order as a continuous scroll; thumbnails represent each page across charts.
     const pagesContainer = document.getElementById('live-pages');
-    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs');
-    if (!pagesContainer || !thumbsContainer) return;
+    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs') || null;
+    if (!pagesContainer) return;
     pagesContainer.innerHTML = '';
-    thumbsContainer.innerHTML = '';
+    if (thumbsContainer) thumbsContainer.innerHTML = '';
 
-    // Default desktop split: if no prior inline sizing was applied (e.g., by the
-    // splitter), start with a balanced 50/50 between pages and right dock and
-    // center the live container. This is a safe no-op on mobile.
+    // Clear any organize-help text left in the header and show Live summary
     try {
-        if (window.innerWidth >= 980) {
-            const container = document.querySelector('.live-container');
-            const pagesWrapper = document.querySelector('.live-pages-wrapper');
-            const rightDock = document.querySelector('.live-right');
-            if (container && pagesWrapper && rightDock) {
-                // Only set if no inline flex already exists (user hasn't resized yet)
-                const hasInline = (rightDock.style.flex && rightDock.style.flex.trim().length > 0) ||
-                                  (pagesWrapper.style.flex && pagesWrapper.style.flex.trim().length > 0);
-                if (!hasInline) {
-                    pagesWrapper.style.flex = '0 1 50%';
-                    rightDock.style.flex = '0 1 50%';
-                    rightDock.style.maxWidth = 'none';
-                }
-            }
-        }
+        const pageIndicatorEl = document.getElementById('page-indicator');
+        if (pageIndicatorEl) pageIndicatorEl.textContent = (AppState.charts && AppState.charts.length) ? `Live • ${AppState.charts.length} chart${AppState.charts.length > 1 ? 's' : ''}` : 'Live';
     } catch (e) {}
+
+    // Live mode now uses a single-column layout; any previous splitter-based
+    // sizing is intentionally not applied here.
 
     if (!window['pdfjsLib']) return;
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
@@ -575,7 +622,7 @@ function renderLiveMode() {
             const target = pagesContainer.querySelector(`.live-page-wrapper[data-chart-index="${chartIdx}"]`);
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
-        thumbsContainer.appendChild(thumbPlaceholder);
+    if (thumbsContainer) thumbsContainer.appendChild(thumbPlaceholder);
 
         // Prefer per-page thumbnail if PageManager has it (first page)
         if (window._pageManager && Array.isArray(chart.pageMap) && chart.pageMap.length > 0) {
@@ -710,108 +757,20 @@ function renderLiveMode() {
     });
     // initialize highlighting after rendering placeholders (small delay to allow DOM updates)
     setTimeout(() => { initLiveHighlighting(); }, 300);
-    // Initialize layout helpers: highlight is needed. Only the RIGHT column
-    // contains modules in Live view; there is no left dock anymore.
-    try {
-        // Enable dragging/reordering of modules within the right dock only
-        const rightCol = document.querySelector('.live-right');
-        if (window.Sortable) {
-            try { if (rightCol && rightCol._sortable) rightCol._sortable.destroy(); } catch (e) {}
-
-            const groupOpts = { name: 'live-modules', pull: true, put: true };
-
-            if (rightCol) {
-                rightCol._sortable = Sortable.create(rightCol, {
-                    group: groupOpts,
-                    animation: 150,
-                    swapThreshold: 0.65,
-                    fallbackOnBody: true,
-                    forceFallback: false,
-                    ghostClass: 'sortable-ghost',
-                    chosenClass: 'sortable-chosen',
-                    // Make the whole module draggable so it’s easier to grab on narrow widths
-                    draggable: '.live-module'
-                });
-            }
-        }
-    } catch (e) {}
+    // Modules are rendered as floating windows now; right-dock sortable
+    // initialization is no longer required in Live mode.
 }
 
-// Live layout resizer: draggable splitter between .live-pages and .live-thumbs
-function initLiveResizer() {
-    try {
-        const splitter = document.getElementById('live-splitter');
-        const pagesWrapper = document.querySelector('.live-pages-wrapper');
-        const rightDock = document.querySelector('.live-right');
-        if (!splitter || !pagesWrapper || !rightDock) return;
-
-        let dragging = false;
-        let startX = 0;
-        let startRightWidth = rightDock.getBoundingClientRect().width;
-
-        const minRight = 200; const maxRight = Math.max(360, window.innerWidth - 400);
-
-        function onPointerDown(e) {
-            dragging = true;
-            startX = e.clientX;
-            startRightWidth = rightDock.getBoundingClientRect().width;
-            document.body.style.userSelect = 'none';
-            document.addEventListener('pointermove', onPointerMove);
-            document.addEventListener('pointerup', onPointerUp);
-        }
-
-        function onPointerMove(e) {
-            if (!dragging) return;
-            const dx = startX - e.clientX;
-            let newRight = Math.round(startRightWidth + dx);
-            if (newRight < minRight) newRight = minRight;
-            if (newRight > maxRight) newRight = maxRight;
-            // set the right dock flex-basis so layout updates smoothly
-            rightDock.style.flex = `0 0 ${newRight}px`;
-            rightDock.style.maxWidth = `${Math.max(newRight, 220)}px`;
-        }
-
-        function onPointerUp() {
-            dragging = false;
-            document.body.style.userSelect = '';
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
-        }
-
-        // attach once
-        splitter.removeEventListener('pointerdown', onPointerDown);
-        splitter.addEventListener('pointerdown', onPointerDown);
-    } catch (e) {
-        // non-fatal
-    }
-}
+// Live layout resizer removed: Live Mode is single-column and does not use
+// a splitter between pages and a right dock. The previous resizer logic
+// was removed to simplify the codebase.
 
 // Adjust the right dock's grid columns responsively so modules can sit
 // side-by-side based on available width. This helps when CSS minmax
 // behavior alone doesn't produce the desired number of columns.
-function adjustRightDockColumns(minColWidth = 120) {
-    // Diagnostic guard: if suppression flag set, skip recalculation.
-    if (typeof _suppressRightDockAdjust !== 'undefined' && _suppressRightDockAdjust) return;
-    try {
-        const rightDock = document.querySelector('.live-right');
-        const container = document.querySelector('.live-container');
-        if (!rightDock) return;
-        // ensure element is using grid so grid-template-columns will apply
-        try { rightDock.style.display = 'grid'; } catch (e) {}
-
-        // Determine number of columns based on available dock width.
-
-        const rect = rightDock.getBoundingClientRect();
-        const available = Math.max(0, rect.width - 12); // account for padding/gap
-        const cols = Math.max(1, Math.floor(available / minColWidth));
-        // Only update grid-template-columns (avoid other layout mutations)
-        // Allow smaller min sizes so more columns can fit on wider docks.
-        // Use a low floor (64px) so thumbnails can form more columns when space
-        // permits; keep sensible sizing by deriving from minColWidth.
-        const minSize = Math.max(64, Math.floor(minColWidth * 0.9));
-        rightDock.style.gridTemplateColumns = `repeat(${cols}, minmax(${minSize}px, 1fr))`;
-    } catch (e) {}
-}
+// adjustRightDockColumns removed: the right dock has been removed from the
+// Live layout and floating panels handle module placement. This helper is
+// no longer needed.
 
 // Enable/disable pointer interactivity for live per-page annotation overlays.
 function updateLiveOverlayInteractivity() {
@@ -859,9 +818,11 @@ function debugLogLayout(tag) {
 }
 
 // Render the chat UI into the Live view chat module (#live-chat-module .module-content)
-function renderLiveChatModule() {
+function renderLiveChatModule(container) {
     try {
-        const container = document.querySelector('#live-chat-module .module-content');
+        // allow injection into a custom container (floating window) or the legacy
+        // live-chat-module location when present
+        if (!container) container = document.querySelector('#live-chat-module .module-content');
         if (!container) return;
         // clear existing and build chat UI similar to sidebar module
         container.innerHTML = '';
@@ -929,6 +890,123 @@ function renderLiveChatModule() {
             } catch (e) {}
         });
         input.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendBtn.click(); });
+    } catch (e) {}
+}
+
+// Floating window helpers (chat and thumbnails). Creates a draggable floating
+// panel with a header and content area. The returned element has id
+// 'floating-<name>-window' and contains a '.floating-content' where module
+// renderers can write.
+function createFloatingWindow(name, title, extraClass) {
+    const id = `floating-${name}-window`;
+    let win = document.getElementById(id);
+    if (win) return win;
+
+    win = document.createElement('div');
+    win.id = id;
+    win.className = `floating-window ${extraClass || ''}`;
+    win.style.position = 'fixed';
+    win.style.right = '20px';
+    win.style.top = name === 'thumbs' ? '120px' : '80px';
+    win.style.zIndex = 1200;
+
+    const header = document.createElement('div');
+    header.className = 'floating-header';
+    header.innerHTML = `<div class="floating-title">${escapeHtml(title || name)}</div>`;
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'floating-close';
+    closeBtn.title = 'Close';
+    closeBtn.innerHTML = '&#10005;';
+    header.appendChild(closeBtn);
+    win.appendChild(header);
+
+    const content = document.createElement('div');
+    content.className = 'floating-content';
+    win.appendChild(content);
+
+    // show/hide helpers
+    win.show = function() { win.classList.add('visible'); win.style.display = ''; };
+    win.hide = function() { win.classList.remove('visible'); win.style.display = 'none'; };
+    win.toggle = function() { if (win.classList.contains('visible')) win.hide(); else win.show(); };
+
+    // close button
+    closeBtn.addEventListener('click', () => { win.hide(); });
+
+    // simple drag: pointer based
+    let dragging = false;
+    let startX = 0, startY = 0, origLeft = 0, origTop = 0;
+    header.style.cursor = 'move';
+    header.addEventListener('pointerdown', (ev) => {
+        dragging = true; header.setPointerCapture(ev.pointerId); header.classList.add('dragging');
+        const rect = win.getBoundingClientRect();
+        startX = ev.clientX; startY = ev.clientY; origLeft = rect.left; origTop = rect.top;
+        ev.preventDefault();
+    });
+    document.addEventListener('pointermove', (ev) => {
+        if (!dragging) return;
+        const dx = ev.clientX - startX; const dy = ev.clientY - startY;
+        win.style.left = Math.max(8, origLeft + dx) + 'px';
+        win.style.top = Math.max(8, origTop + dy) + 'px';
+        // unset right to allow absolute left positioning
+        win.style.right = 'auto';
+    });
+    document.addEventListener('pointerup', (ev) => { if (dragging) { dragging = false; header.classList.remove('dragging'); } });
+
+    document.body.appendChild(win);
+    // start hidden
+    win.hide();
+    return win;
+}
+
+function toggleFloatingChat() {
+    try {
+        const btn = document.getElementById('chat-toggle-btn');
+        const win = createFloatingWindow('chat', 'Chat', 'chat');
+        win.toggle();
+        if (win.classList.contains('visible')) {
+            // render chat into floating content
+            try { renderLiveChatModule(win.querySelector('.floating-content')); } catch (e) {}
+            // clear unread badge
+            if (btn) btn.classList.remove('chat-unread');
+        }
+    } catch (e) {}
+}
+
+function toggleFloatingThumbs() {
+    try {
+        const btn = document.getElementById('thumbs-toggle-btn');
+        const win = createFloatingWindow('thumbs', 'Thumbnails', 'thumbs');
+        win.toggle();
+        if (win.classList.contains('visible')) {
+            // render thumbnails module into floating content using SidebarManager's thumbnails renderer when available
+            const content = win.querySelector('.floating-content');
+            if (content) {
+                try {
+                    content.innerHTML = '';
+                    if (window._sidebarManager && window._sidebarManager.moduleMap && window._sidebarManager.moduleMap['thumbnails']) {
+                        const mod = window._sidebarManager.moduleMap['thumbnails'].module;
+                        if (mod && typeof mod.render === 'function') mod.render(content);
+                    } else {
+                        // fallback: mirror sidebar thumbnails
+                        const pages = window._pageManager ? window._pageManager.serialize().pages || {} : {};
+                        const ids = Object.keys(pages || {});
+                        if (!ids.length) content.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
+                        else ids.forEach(pid => {
+                            const p = pages[pid] || {};
+                            const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                            const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                            if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                            else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml((p.name||'').toString().slice(0,12))}</div>`;
+                            item.appendChild(imgWrap);
+                            const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = p.name || pid; item.appendChild(label);
+                            item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                            content.appendChild(item);
+                        });
+                    }
+                } catch (e) {}
+            }
+            if (btn) btn.classList.remove('chat-unread');
+        }
     } catch (e) {}
 }
 
@@ -1293,6 +1371,13 @@ function startLiveSocket() {
                             }
                         } catch (e) {}
                     }
+                } catch (e) {}
+                // If the floating chat window is not visible, indicate unread on header button
+                try {
+                    const floatWin = document.getElementById('floating-chat-window');
+                    const btn = document.getElementById('chat-toggle-btn');
+                    const visible = floatWin && floatWin.classList.contains('visible');
+                    if (!visible && btn) btn.classList.add('chat-unread');
                 } catch (e) {}
             }
         } catch (e) {}
@@ -1856,17 +1941,40 @@ function saveSessionCharts() {
     // session and an associated director token (i.e., active participants).
     return (async () => {
         if (!AppState.sessionCode) return false;
-        const directorToken = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+        let directorToken = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
             try {
                 let pagesPayload = undefined;
                 try { if (window._pageManager) { pagesPayload = window._pageManager.serialize().pages; } } catch (e) { pagesPayload = undefined; }
                 const body = pagesPayload ? { charts: AppState.charts, pages: pagesPayload } : { charts: AppState.charts };
-                const res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
+                let res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
                     body: JSON.stringify(body)
                 });
+
+                // If server responds with 404 (session not found), try to recover by
+                // creating a fresh server session and retrying once.
+                if (res && res.status === 404) {
+                    try { console.warn('saveSessionCharts: server returned 404; attempting to recover by creating a new session'); } catch (e) {}
+                    // attempt to create a new server-backed session
+                    try {
+                        await createSession();
+                        // update director token and session code from newly created session
+                        directorToken = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+                        if (AppState.sessionCode && directorToken) {
+                            // retry save once
+                            res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
+                                body: JSON.stringify(body)
+                            });
+                            return res && res.ok;
+                        }
+                    } catch (e) { /* fall through to return false */ }
+                    return false;
+                }
+
                 return res.ok;
             } catch (e) {
                 console.warn('Failed to save charts to server:', e);
@@ -2743,6 +2851,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const organizeBtn = document.getElementById('organize-mode-btn');
     if (organizeBtn) organizeBtn.addEventListener('click', () => switchToMode('organize'));
 
+    // Header toggles for floating chat and thumbnails
+    const chatToggle = document.getElementById('chat-toggle-btn');
+    if (chatToggle) chatToggle.addEventListener('click', toggleFloatingChat);
+    const thumbsToggle = document.getElementById('thumbs-toggle-btn');
+    if (thumbsToggle) thumbsToggle.addEventListener('click', toggleFloatingThumbs);
+
     const annotationBtn = document.getElementById('annotation-btn');
     if (annotationBtn) annotationBtn.addEventListener('click', toggleAnnotationMode);
 
@@ -2873,7 +2987,4 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Keep right dock columns responsive to window resizes
-window.addEventListener('resize', () => { try { adjustRightDockColumns(); } catch (e) {} });
-// Also call once at load to set initial layout
-try { adjustRightDockColumns(); } catch (e) {}
+// Right-dock responsive adjustments removed (dock removed from Live view).

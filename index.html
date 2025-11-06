@@ -11,53 +11,20 @@
         // hasn't finished initializing. When the real functions load they
         // will replace these.
         (function(){
-            function genCode() {
-                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-                let code = '';
-                for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
-                return code;
-            }
-
+            // Minimal defensive stubs: avoid creating client-only sessions before
+            // the real application code (`app.js`) loads. When `app.js` loads it
+            // will replace these with the full implementations.
             window.createSession = window.createSession || function() {
-                console.log('inline createSession called');
-                try {
-                    if (!window.AppState) window.AppState = {};
-                    if (!window.AppState.sessionCode) {
-                        window.AppState.sessionCode = genCode();
-                        window.AppState.isDirector = true;
-                        try { window.AppState.directorToken = 'local'; } catch (e) {}
-                    }
-                    // Prefer app-level navigation when available
-                    if (typeof showPage === 'function') {
-                        try { showPage('upload'); } catch (e) {}
-                    } else {
-                        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                        const up = document.getElementById('upload-page'); if (up) up.classList.add('active');
-                    }
-                    const uploadCodeEl = document.getElementById('session-code-display'); if (uploadCodeEl) uploadCodeEl.textContent = window.AppState.sessionCode;
-                    const viewerCodeTextEl = document.getElementById('viewer-session-code-text'); if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${window.AppState.sessionCode}`;
-                    try { if (typeof updateRoleUI === 'function') updateRoleUI(); } catch (e) {}
-                } catch (e) { console.warn('inline createSession failed', e); }
+                // If the real createSession exists it will replace this stub when
+                // app.js loads; clicking the button before the app is ready can
+                // be confusing, so inform the user instead of creating a client-only session.
+                console.log('createSession pressed but app not ready yet');
+                alert('The application is still loading. Please wait a moment and try again.');
             };
 
             window.joinSession = window.joinSession || function() {
-                try {
-                    const input = document.getElementById('session-code-input');
-                    if (!input) { alert('No session input found'); return; }
-                    const code = (input.value || '').trim().toUpperCase();
-                    if (code.length !== 6) { alert('Please enter a valid 6-character session code'); return; }
-                    if (!window.AppState) window.AppState = {};
-                    window.AppState.sessionCode = code;
-                    window.AppState.isDirector = !!(window.AppState && window.AppState.directorToken) || !!localStorage.getItem(`session_${code}_directorToken`);
-                    if (typeof showPage === 'function') {
-                        try { showPage('viewer'); } catch (e) {}
-                        try { if (typeof switchToMode === 'function') switchToMode('live'); } catch (e) {}
-                    } else {
-                        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                        const vp = document.getElementById('viewer-page'); if (vp) vp.classList.add('active');
-                    }
-                    const viewerCodeTextEl = document.getElementById('viewer-session-code-text'); if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${code}`;
-                } catch (e) { console.warn('inline joinSession failed', e); }
+                console.log('joinSession pressed but app not ready yet');
+                alert('The application is still loading. Please wait a moment and try again.');
             };
         })();
     </script>
@@ -188,6 +155,22 @@
                             </svg>
                         </button>
                         
+                        <!-- Floating Chat & Thumbs toggles -->
+                        <button id="chat-toggle-btn" class="btn btn-icon" title="Toggle Chat" aria-label="Toggle chat">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </button>
+
+                        <button id="thumbs-toggle-btn" class="btn btn-icon" title="Toggle Thumbnails" aria-label="Toggle thumbnails">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="3" y="14" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect>
+                            </svg>
+                        </button>
+
                         <button id="annotation-btn" class="btn btn-icon" title="Toggle Annotations">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M12 19l7 2-2-7-7-7-5 5z"></path>
@@ -253,18 +236,9 @@
                                 <div id="live-pages" class="live-pages"></div>
                             </div>
 
-                            <div id="live-splitter" class="live-splitter" aria-hidden="true"></div>
-
-                            <aside class="live-right live-module-dock" aria-label="Module dock right">
-                                <div id="live-chat-module" class="live-module">
-                                    <div class="module-header">Chat</div>
-                                    <div class="module-content"></div>
-                                </div>
-                                <div id="live-thumbs-module" class="live-module thumbs-module">
-                                    <div class="module-header">Thumbnails</div>
-                                    <div class="module-content live-thumbs"></div>
-                                </div>
-                            </aside>
+                            <!-- Right dock and splitter removed: Live Mode now shows only the
+                                 scrollable charts area. Floating chat/thumbnails are available
+                                 via header toggles and render as floating windows. -->
                         </div>
                 </div>
 
