@@ -556,6 +556,9 @@ input[type="text"]::placeholder {
 .floating-window .floating-actions { display:flex; gap:6px; align-items:center; }
 .floating-window .floating-content { padding: 8px; overflow: auto; flex: 1 1 auto; }
 
+/* Ensure floating content can position overlays like the chat fade element */
+.floating-window .floating-content { position: relative; }
+
 .floating-close-btn { background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px; }
 .floating-close-btn:hover { background: var(--hover); }
 
@@ -1417,6 +1420,32 @@ header .theme-toggle,
     overflow-y: auto;
     padding-right: 6px;
 }
+
+/* Compact empty state: keep the initial chat small when no messages exist */
+.chat-messages.chat-empty {
+    max-height: 56px; /* small preview height for an empty chat */
+    transition: max-height 180ms ease;
+}
+
+/* Expanded state when messages exist */
+.chat-messages.chat-expanded {
+    max-height: 360px; /* allow more messages visible before scrolling */
+    transition: max-height 220ms ease;
+}
+
+/* Top fade overlay to softly hide older messages when scrollable */
+.chat-fade-top {
+    position: absolute;
+    top: 8px; left: 8px; right: 8px;
+    height: 28px;
+    pointer-events: none;
+    z-index: 6;
+    opacity: 0;
+    transition: opacity 180ms ease;
+    /* subtle gradient; works on light backgrounds. For dark theme this will still be subtle. */
+    background: linear-gradient(to bottom, rgba(0,0,0,0.06), rgba(0,0,0,0));
+}
+.chat-fade-top.visible { opacity: 1; }
 .chat-msg {
     font-size: 0.9rem;
     color: var(--text-primary);

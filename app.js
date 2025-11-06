@@ -824,9 +824,12 @@ function renderLiveChatModule(container) {
         // live-chat-module location when present
         if (!container) container = document.querySelector('#live-chat-module .module-content');
         if (!container) return;
-        // clear existing and build chat UI similar to sidebar module
-        container.innerHTML = '';
-        const msgs = document.createElement('div'); msgs.className = 'chat-messages'; container.appendChild(msgs);
+    // clear existing and build chat UI similar to sidebar module
+    container.innerHTML = '';
+    // start with a compact empty state; expand when the first message arrives
+    const msgs = document.createElement('div'); msgs.className = 'chat-messages chat-empty'; container.appendChild(msgs);
+    // fade overlay to visually fade older messages when overflow occurs
+    const fadeTop = document.createElement('div'); fadeTop.className = 'chat-fade-top'; container.appendChild(fadeTop);
 
         container._chatIds = new Set();
         container._pendingMap = {};
@@ -873,7 +876,23 @@ function renderLiveChatModule(container) {
                 const body = document.createElement('div'); body.className = 'chat-body'; body.textContent = msg.text || ''; el.appendChild(body);
                 if (msg.id) { try { el.dataset.msgId = msg.id; } catch (e) {} container._chatIds.add(msg.id); }
                 if (msg.clientTempId && !msg.id) { try { el.dataset.tempId = msg.clientTempId; } catch (e) {} el.classList.add('pending'); container._pendingMap[msg.clientTempId] = el; }
-                msgsEl.appendChild(el); msgsEl.scrollTop = msgsEl.scrollHeight;
+                msgsEl.appendChild(el);
+                // when the first message is added, expand from empty state
+                try {
+                    if (msgsEl.classList.contains('chat-empty')) {
+                        msgsEl.classList.remove('chat-empty');
+                        msgsEl.classList.add('chat-expanded');
+                    }
+                } catch (e) {}
+                // scroll to bottom so newest message is visible
+                try { msgsEl.scrollTop = msgsEl.scrollHeight; } catch (e) {}
+                // toggle fade overlay visibility when overflow exists
+                try {
+                    const fade = container.querySelector('.chat-fade-top');
+                    if (fade) {
+                        if (msgsEl.scrollHeight > msgsEl.clientHeight + 4) fade.classList.add('visible'); else fade.classList.remove('visible');
+                    }
+                } catch (e) {}
             } catch (e) {}
         }
 
@@ -2570,9 +2589,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         render: (contentEl) => {
                             try {
                                 contentEl.innerHTML = '';
+                                // start compact when empty and expand when messages arrive
                                 const msgs = document.createElement('div');
-                                msgs.className = 'chat-messages';
+                                msgs.className = 'chat-messages chat-empty';
                                 contentEl.appendChild(msgs);
+                                const fadeTop = document.createElement('div'); fadeTop.className = 'chat-fade-top'; contentEl.appendChild(fadeTop);
 
                                 // tiny in-memory dedupe and pending map per module instance
                                 contentEl._chatIds = new Set(); // known server message ids
@@ -2702,7 +2723,16 @@ document.addEventListener('DOMContentLoaded', function() {
                                         }
 
                                         msgs.appendChild(el);
-                                        msgs.scrollTop = msgs.scrollHeight;
+                                        try {
+                                            if (msgs.classList.contains('chat-empty')) { msgs.classList.remove('chat-empty'); msgs.classList.add('chat-expanded'); }
+                                        } catch (e) {}
+                                        try { msgs.scrollTop = msgs.scrollHeight; } catch (e) {}
+                                        try {
+                                            const fade = contentEl.querySelector('.chat-fade-top');
+                                            if (fade) {
+                                                if (msgs.scrollHeight > msgs.clientHeight + 4) fade.classList.add('visible'); else fade.classList.remove('visible');
+                                            }
+                                        } catch (e) {}
                                     } catch (e) {}
                                 }
 
