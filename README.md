@@ -74,6 +74,29 @@ npx http-server -p 8080
 http://localhost:8080
 ```
 
+### Running the optional development server (client + API)
+
+This project also includes a lightweight development server under `server/` that provides:
+- Session persistence and server-backed sessions (useful for multi-device testing)
+- WebSocket-based live updates for chart/page changes and chat
+- API endpoints under `/api/sessions`
+
+To run both the static client server and the API server together (recommended for development):
+
+```powershell
+npm run dev
+```
+
+This script starts a static file server on port 8080 and the API server on port 3000. The frontend will talk to the API at `http://localhost:3000` by default.
+
+Environment variables (optional):
+- `NEW_SESSION_GRACE_MS` — grace window (ms) to avoid deleting brand-new sessions before clients subscribe (default: 5000)
+- `DIRECTOR_DISCONNECT_GRACE_MS` — how long (ms) to wait after a director WS disconnect before deleting the session (default: 30000)
+
+Session lifecycle notes
+- The server will delete sessions when the director explicitly leaves or after inactivity, but the client now opens the websocket immediately after creating a session and persists the director token in localStorage so deletes and saves are authorized and reliable.
+
+
 ## Usage Guide
 
 ### For Music Directors

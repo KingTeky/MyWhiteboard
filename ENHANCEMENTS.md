@@ -13,6 +13,18 @@ This document consolidates optional enhancements, feature ideas, and the current
   - A lightweight server exists under `server/` and now supports persisting `pages` with validation limits.
   - Next: formalize API contracts and authentication for production readiness.
 
+### Recent backend / session lifecycle work (2025-11-06)
+
+- Prevented a race where an HTTP-created session could be removed before the client opened its WebSocket. Fixes applied:
+  - Client persists the director token in `localStorage` and starts the live WebSocket immediately after creating a server-backed session.
+  - Server implements a short grace window for newly-created sessions (configurable via `NEW_SESSION_GRACE_MS`, default 5000 ms) to avoid immediate deletion before clients subscribe.
+  - Server also schedules a director-disconnect grace window (configurable via `DIRECTOR_DISCONNECT_GRACE_MS`, default 30000 ms) rather than deleting instantly on a transient WS disconnect.
+  - Client now retries saving charts once by creating a new server-backed session if it receives a 404 (session not found) on POST /charts.
+  - Server no longer emits a verbose stack-trace on session deletion; logs were simplified for quieter output.
+
+Benefits: more reliable session lifecycle during development and multi-tab/multi-device testing.
+
+
 - Real-time collaboration (WebSocket): PARTIALLY IMPLEMENTED
   - Server and client support a `page:update` WebSocket message for single-page updates; clients receive and apply per-page updates.
   - Next: add conflict resolution strategy (OT/CRDT) for concurrent edits.
