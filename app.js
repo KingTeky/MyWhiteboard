@@ -913,11 +913,17 @@ function createFloatingWindow(name, title, extraClass) {
     const header = document.createElement('div');
     header.className = 'floating-header';
     header.innerHTML = `<div class="floating-title">${escapeHtml(title || name)}</div>`;
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'floating-close';
-    closeBtn.title = 'Close';
-    closeBtn.innerHTML = '&#10005;';
-    header.appendChild(closeBtn);
+    // For chat and thumbnails we don't show the small close 'x' because
+    // the modules are toggled via their header buttons. Other floating
+    // windows still get a close button.
+    let closeBtn = null;
+    if (name !== 'chat' && name !== 'thumbs') {
+        closeBtn = document.createElement('button');
+        closeBtn.className = 'floating-close';
+        closeBtn.title = 'Close';
+        closeBtn.innerHTML = '&#10005;';
+        header.appendChild(closeBtn);
+    }
     win.appendChild(header);
 
     const content = document.createElement('div');
@@ -929,8 +935,10 @@ function createFloatingWindow(name, title, extraClass) {
     win.hide = function() { win.classList.remove('visible'); win.style.display = 'none'; };
     win.toggle = function() { if (win.classList.contains('visible')) win.hide(); else win.show(); };
 
-    // close button
-    closeBtn.addEventListener('click', () => { win.hide(); });
+    // close button (if present)
+    try {
+        if (closeBtn) closeBtn.addEventListener('click', () => { win.hide(); });
+    } catch (e) {}
 
     // simple drag: pointer based
     let dragging = false;
