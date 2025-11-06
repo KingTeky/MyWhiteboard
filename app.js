@@ -112,21 +112,17 @@ function createSession() {
                 const j = await res.json();
                 AppState.sessionCode = j.code;
                 AppState.isDirector = true;
-                // Save director token locally to authenticate director actions later
-                localStorage.setItem(`session_${j.code}_directorToken`, j.directorToken);
-                // Save currentSession for demo persistence
-                localStorage.setItem('currentSession', JSON.stringify({ code: j.code, isDirector: true, charts: [] }));
+                // keep director token in-memory only; do not persist to localStorage
+                AppState.directorToken = j.directorToken;
             } else {
                 // fallback
                 AppState.sessionCode = generateSessionCode();
                 AppState.isDirector = true;
-                localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: [] }));
             }
         } catch (e) {
             // network/server unavailable - fallback to client-only session
             AppState.sessionCode = generateSessionCode();
             AppState.isDirector = true;
-            localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: [] }));
         }
 
     showPage('upload');
@@ -137,7 +133,14 @@ function createSession() {
         // Update UI to reflect director privileges
         updateRoleUI();
         // If a live websocket exists, subscribe to this session so viewers receive updates
-        try { if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode })); } catch (e) {}
+        try {
+            if (_ws && _ws.readyState === WebSocket.OPEN) {
+                const sub = { type: 'subscribe', session: AppState.sessionCode };
+                const token = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+                if (token) sub.token = token;
+                _ws.send(JSON.stringify(sub));
+            }
+        } catch (e) {}
     })();
 }
 
@@ -154,8 +157,8 @@ function joinSession() {
     const sessionData = localStorage.getItem(`session_${code}`);
     
     AppState.sessionCode = code;
-    // If this client has the saved director token for this session, treat as director locally
-    const localToken = localStorage.getItem(`session_${code}_directorToken`);
+    // If this client has the saved director token for this session (or an in-memory token), treat as director locally
+    const localToken = AppState.directorToken || localStorage.getItem(`session_${code}_directorToken`);
     AppState.isDirector = !!localToken;
 
     const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
@@ -188,7 +191,14 @@ function joinSession() {
             switchToMode('live');
             renderCurrentChart();
             // ensure websocket subscription for live updates
-            try { if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode })); } catch (e) {}
+            try {
+                if (_ws && _ws.readyState === WebSocket.OPEN) {
+                    const sub = { type: 'subscribe', session: AppState.sessionCode };
+                    const token = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+                    if (token) sub.token = token;
+                    _ws.send(JSON.stringify(sub));
+                }
+            } catch (e) {}
         } else {
             alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
         }
@@ -197,6 +207,21 @@ function joinSession() {
 
 function startSession() {
     console.log('startSession() called', { sessionCode: AppState.sessionCode, chartsCount: AppState.charts.length });
+
+    // If we restored a session automatically from localStorage earlier in
+    // this page load, the user's intent when clicking "Start Session" may be
+    // to create a fresh session. Offer a small confirmation so they can
+    // choose to clear the restored charts and start new.
+    try {
+        if (window._restoredCurrentSession) {
+            const keep = confirm('A saved session was detected from a previous visit.\n\nPress OK to continue with the saved charts, or Cancel to clear them and start a fresh session.');
+            if (!keep) {
+                AppState.charts = [];
+                try { localStorage.removeItem('currentSession'); } catch (e) {}
+                try { window._restoredCurrentSession = false; } catch (e) {}
+            }
+        }
+    } catch (e) {}
 
     if (AppState.charts.length === 0) {
         alert('Please upload at least one PDF before starting the session');
@@ -214,9 +239,10 @@ function startSession() {
         console.info('Generated session code for startSession:', AppState.sessionCode);
     }
 
-    // Save session data: try server first (requires director token), fallback to localStorage
+    // Save session data: attempt server-side save only when a director token is present.
+    // Do NOT persist sessions into localStorage by default.
     (async () => {
-        const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+        const directorToken = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
             try {
                 const res = await fetch(`${SERVER_BASE}/api/sessions/${AppState.sessionCode}/charts`, {
@@ -225,13 +251,12 @@ function startSession() {
                     body: JSON.stringify({ charts: AppState.charts })
                 });
                 if (!res.ok) throw new Error('server save failed');
-                localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: true, charts: AppState.charts }));
             } catch (e) {
-                console.warn('Failed to save charts to server, falling back to localStorage', e);
-                try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (err) {}
+                console.warn('Failed to save charts to server', e);
             }
         } else {
-            try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (err) {}
+            // No director token: do not write session to localStorage. The app will only
+            // persist sessions when server-side presence is confirmed.
         }
 
         // Navigate to viewer and render the first chart, but guard rendering errors
@@ -259,14 +284,37 @@ function startSession() {
 
 function leaveSession() {
     if (confirm('Are you sure you want to leave this session?')) {
+        // Capture values for a possible server-side delete before we clear state
+        const serverCode = AppState.sessionCode;
+        const serverToken = AppState.directorToken;
+
         // Reset state
         // stop live socket if active
         stopLiveSocket();
         AppState.charts = [];
         AppState.currentChartIndex = 0;
         AppState.currentPageNumber = 1;
+        // Clear any persisted session data to ensure sessions are not left saved.
+        try {
+            if (serverCode) {
+                try { localStorage.removeItem(`session_${serverCode}`); } catch (e) {}
+                try { localStorage.removeItem(`session_${serverCode}_directorToken`); } catch (e) {}
+            }
+            try { localStorage.removeItem('currentSession'); } catch (e) {}
+        } catch (e) {}
         AppState.sessionCode = null;
         AppState.isDirector = false;
+
+        // If this client was the director and a server-side token exists, ask server to delete the session immediately
+        try {
+            if (serverCode && serverToken) {
+                // best-effort fire-and-forget; do not block UI
+                fetch(`${SERVER_BASE}/api/sessions/${serverCode}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json', 'x-director-token': serverToken }
+                }).catch(() => {});
+            }
+        } catch (e) {}
     const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
     if (viewerCodeTextEl) viewerCodeTextEl.textContent = '';
         const uploadCodeEl = document.getElementById('session-code-display');
@@ -459,6 +507,27 @@ function renderLiveMode() {
     pagesContainer.innerHTML = '';
     thumbsContainer.innerHTML = '';
 
+    // Default desktop split: if no prior inline sizing was applied (e.g., by the
+    // splitter), start with a balanced 50/50 between pages and right dock and
+    // center the live container. This is a safe no-op on mobile.
+    try {
+        if (window.innerWidth >= 980) {
+            const container = document.querySelector('.live-container');
+            const pagesWrapper = document.querySelector('.live-pages-wrapper');
+            const rightDock = document.querySelector('.live-right');
+            if (container && pagesWrapper && rightDock) {
+                // Only set if no inline flex already exists (user hasn't resized yet)
+                const hasInline = (rightDock.style.flex && rightDock.style.flex.trim().length > 0) ||
+                                  (pagesWrapper.style.flex && pagesWrapper.style.flex.trim().length > 0);
+                if (!hasInline) {
+                    pagesWrapper.style.flex = '0 1 50%';
+                    rightDock.style.flex = '0 1 50%';
+                    rightDock.style.maxWidth = 'none';
+                }
+            }
+        }
+    } catch (e) {}
+
     if (!window['pdfjsLib']) return;
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
@@ -641,17 +710,13 @@ function renderLiveMode() {
     });
     // initialize highlighting after rendering placeholders (small delay to allow DOM updates)
     setTimeout(() => { initLiveHighlighting(); }, 300);
-    // Initialize layout helpers: highlighting is needed. Make the right
-    // column modular and reorderable via Sortable (chat/thumbs). The
-    // draggable splitter was removed because it trapped the right column
-    // inside the page scroll.
+    // Initialize layout helpers: highlight is needed. Only the RIGHT column
+    // contains modules in Live view; there is no left dock anymore.
     try {
-        // Enable dragging modules between left and right docks
+        // Enable dragging/reordering of modules within the right dock only
         const rightCol = document.querySelector('.live-right');
-        const leftDock = document.querySelector('.live-dock-left');
         if (window.Sortable) {
             try { if (rightCol && rightCol._sortable) rightCol._sortable.destroy(); } catch (e) {}
-            try { if (leftDock && leftDock._sortable) leftDock._sortable.destroy(); } catch (e) {}
 
             const groupOpts = { name: 'live-modules', pull: true, put: true };
 
@@ -664,21 +729,7 @@ function renderLiveMode() {
                     forceFallback: false,
                     ghostClass: 'sortable-ghost',
                     chosenClass: 'sortable-chosen',
-                    handle: '.module-header',
-                    draggable: '.live-module'
-                });
-            }
-
-            if (leftDock) {
-                leftDock._sortable = Sortable.create(leftDock, {
-                    group: groupOpts,
-                    animation: 150,
-                    swapThreshold: 0.65,
-                    fallbackOnBody: true,
-                    forceFallback: false,
-                    ghostClass: 'sortable-ghost',
-                    chosenClass: 'sortable-chosen',
-                    handle: '.module-header',
+                    // Make the whole module draggable so it’s easier to grab on narrow widths
                     draggable: '.live-module'
                 });
             }
@@ -738,19 +789,27 @@ function initLiveResizer() {
 // Adjust the right dock's grid columns responsively so modules can sit
 // side-by-side based on available width. This helps when CSS minmax
 // behavior alone doesn't produce the desired number of columns.
-function adjustRightDockColumns(minColWidth = 140) {
+function adjustRightDockColumns(minColWidth = 120) {
     // Diagnostic guard: if suppression flag set, skip recalculation.
     if (typeof _suppressRightDockAdjust !== 'undefined' && _suppressRightDockAdjust) return;
     try {
         const rightDock = document.querySelector('.live-right');
+        const container = document.querySelector('.live-container');
         if (!rightDock) return;
         // ensure element is using grid so grid-template-columns will apply
         try { rightDock.style.display = 'grid'; } catch (e) {}
+
+        // Determine number of columns based on available dock width.
+
         const rect = rightDock.getBoundingClientRect();
         const available = Math.max(0, rect.width - 12); // account for padding/gap
         const cols = Math.max(1, Math.floor(available / minColWidth));
         // Only update grid-template-columns (avoid other layout mutations)
-        rightDock.style.gridTemplateColumns = `repeat(${cols}, minmax(${Math.max(96, Math.floor(minColWidth*0.8))}px, 1fr))`;
+        // Allow smaller min sizes so more columns can fit on wider docks.
+        // Use a low floor (64px) so thumbnails can form more columns when space
+        // permits; keep sensible sizing by deriving from minColWidth.
+        const minSize = Math.max(64, Math.floor(minColWidth * 0.9));
+        rightDock.style.gridTemplateColumns = `repeat(${cols}, minmax(${minSize}px, 1fr))`;
     } catch (e) {}
 }
 
@@ -771,7 +830,7 @@ function updateLiveOverlayInteractivity() {
 }
 
 // Debug helper: log boundingClientRect for key layout elements and briefly outline them.
-// Temporary: used to diagnose layout changes when toggling orientation.
+// Temporary: used to diagnose layout changes.
 function debugLogLayout(tag) {
     try {
         const elems = {
@@ -1161,7 +1220,12 @@ function startLiveSocket() {
     _ws.addEventListener('open', () => {
         // subscribe to the session if we have a code
         if (AppState.sessionCode) {
-            _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode }));
+            try {
+                const sub = { type: 'subscribe', session: AppState.sessionCode };
+                const token = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+                if (token) sub.token = token;
+                _ws.send(JSON.stringify(sub));
+            } catch (e) { try { _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode })); } catch (err) {} }
         }
     });
 
@@ -1270,9 +1334,8 @@ function handleServerChartsUpdate(serverCharts) {
     const remote = JSON.stringify(serverChartsArr || []);
     if (local === remote && (!window._pageManager || JSON.stringify(window._pageManager.serialize().pages || {}) === JSON.stringify(serverPages || {}))) return; // nothing changed
 
-    // update state
+    // update state (do not persist to localStorage here)
     AppState.charts = serverChartsArr;
-    try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
 
     // update PageManager with server pages if available
     try {
@@ -1511,8 +1574,7 @@ async function fetchAndUpdateCharts() {
         const remote = JSON.stringify(serverCharts || []);
         if (local !== remote) {
             AppState.charts = serverCharts;
-            // persist a local snapshot
-            try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+            // Do not persist session snapshots to localStorage automatically.
             // refresh views depending on mode
             if (AppState.viewMode === 'live') {
                 renderLiveMode();
@@ -1595,8 +1657,7 @@ function generatePageThumbnail(chart, pageNumber = 1, maxWidth = 300) {
 // Initialize SortableJS on the charts grid for touch-friendly drag/reorder
 let _sortableInstance = null;
 // When true, avoid running the expensive/DOM-mutation right-dock column
-// recalculation while we're toggling orientation. This is a temporary
-// test hook to diagnose layout shifts caused by adjustRightDockColumns().
+// recalculation. This is a test hook to diagnose layout shifts caused by adjustRightDockColumns().
 let _suppressRightDockAdjust = false;
 function initSortable() {
     const grid = document.getElementById('charts-grid');
@@ -1790,17 +1851,14 @@ function reorderCharts(fromIndex, toIndex) {
 }
 
 function saveSessionCharts() {
-    // Persist charts: try server if director token exists, otherwise use localStorage
+    // Persist charts: try server if director token exists. Do NOT persist to localStorage
+    // by default — sessions should only be saved when there's a server-side
+    // session and an associated director token (i.e., active participants).
     return (async () => {
-        if (!AppState.sessionCode) {
-            // store as currentSession for demo flows
-            try { localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts })); } catch (e) {}
-            return false;
-        }
-        const directorToken = localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
+        if (!AppState.sessionCode) return false;
+        const directorToken = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
         if (directorToken) {
             try {
-                // include pages from PageManager when available
                 let pagesPayload = undefined;
                 try { if (window._pageManager) { pagesPayload = window._pageManager.serialize().pages; } } catch (e) { pagesPayload = undefined; }
                 const body = pagesPayload ? { charts: AppState.charts, pages: pagesPayload } : { charts: AppState.charts };
@@ -1809,16 +1867,13 @@ function saveSessionCharts() {
                     headers: { 'Content-Type': 'application/json', 'x-director-token': directorToken },
                     body: JSON.stringify(body)
                 });
-                if (res.ok) {
-                    try { localStorage.setItem('currentSession', JSON.stringify({ code: AppState.sessionCode, isDirector: AppState.isDirector, charts: AppState.charts })); } catch (e) {}
-                    return true;
-                }
+                return res.ok;
             } catch (e) {
                 console.warn('Failed to save charts to server:', e);
+                return false;
             }
         }
-        // fallback to localStorage
-        try { localStorage.setItem(`session_${AppState.sessionCode}`, JSON.stringify({ code: AppState.sessionCode, charts: AppState.charts })); } catch (e) {}
+        // No director token available — do not write session to localStorage automatically.
         return false;
     })();
 }
@@ -1855,7 +1910,7 @@ function prevChart() {
 
 // View Mode Switching
 async function switchToMode(mode) {
-    // Normalize legacy 'edit' mode to live since Edit mode is removed; repurpose edit button as orientation toggle
+    // Normalize legacy 'edit' mode to live since Edit mode is removed.
     if (mode === 'edit') mode = 'live';
     const prevMode = AppState.viewMode; // remember previous mode so we can make sensible defaults
     AppState.viewMode = mode;
@@ -1863,22 +1918,18 @@ async function switchToMode(mode) {
     const editView = document.getElementById('edit-view');
     const liveView = document.getElementById('live-view');
     const organizeView = document.getElementById('organize-view');
-    const editBtn = document.getElementById('edit-mode-btn');
     const liveBtn = document.getElementById('live-mode-btn');
     const organizeBtn = document.getElementById('organize-mode-btn');
 
     // Clear active states
     [editView, liveView, organizeView].forEach(v => { if (v) v.classList.remove('active'); });
-    [editBtn, liveBtn, organizeBtn].forEach(b => { if (b) b.classList.remove('active'); });
+    [liveBtn, organizeBtn].forEach(b => { if (b) b.classList.remove('active'); });
 
     if (mode === 'live') {
         if (liveView) liveView.classList.add('active');
         if (liveBtn) liveBtn.classList.add('active');
         stopOrganizeTicker();
-        // If we're switching from Organize to Live (e.g. double-click open),
-        // default to vertical orientation so users land in the expected
-        // stacked pages view rather than horizontal which can be surprising.
-        try { if (prevMode === 'organize') setLiveOrientation(false); } catch (e) {}
+    // If we're switching from Organize to Live (e.g. double-click open),
         // If director, persist current organize ordering to server so viewers will be updated
         if (AppState.isDirector) {
             try {
@@ -1902,106 +1953,11 @@ async function switchToMode(mode) {
     }
 }
 
-// Live orientation helpers: vertical (default) or horizontal view
-function setLiveOrientation(isHorizontal) {
-    try {
-        const pages = document.getElementById('live-pages');
-        const editBtn = document.getElementById('edit-mode-btn');
-        if (!pages) return;
-        if (isHorizontal) {
-            pages.classList.add('horizontal');
-            if (editBtn) editBtn.classList.add('active');
-            localStorage.setItem('liveOrientation', 'horizontal');
-        } else {
-            pages.classList.remove('horizontal');
-            if (editBtn) editBtn.classList.remove('active');
-            localStorage.setItem('liveOrientation', 'vertical');
-        }
-        // Constrain the pages area to the remaining space so a wide
-        // horizontal page won't expand the live container and push the
-        // right dock off-screen. Calculate available width and set a
-        // max-width on the pages wrapper while horizontal. Remove when
-        // returning to vertical.
-        try {
-            const rightDock = document.querySelector('.live-right');
-            const splitter = document.getElementById('live-splitter');
-            const pagesWrapper = document.querySelector('.live-pages-wrapper');
-            const pagesEl = document.getElementById('live-pages');
-            if (isHorizontal) {
-                // cap the right dock contribution so a large grid or max-width
-                // doesn't claim the majority of the viewport (observed as 920px
-                // in screenshots). Use the actual width but limit to a reasonable
-                // portion of the viewport so pages remain usable.
-                const rawRightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
-                const maxAllowedRight = Math.min(Math.round(window.innerWidth * 0.42), 640); // don't let dock exceed ~42% or 640px
-                const rightW = Math.min(rawRightW, maxAllowedRight);
-                const splitW = splitter ? Math.round(splitter.getBoundingClientRect().width) : 10;
-                const occupy = rightW + splitW + 24; // extra gutter
-                if (pagesWrapper) pagesWrapper.style.maxWidth = `calc(100% - ${occupy}px)`;
-                if (pagesEl) pagesEl.style.maxWidth = `calc(100% - ${occupy}px)`;
-            } else {
-                if (pagesWrapper) pagesWrapper.style.maxWidth = '';
-                if (pagesEl) pagesEl.style.maxWidth = '';
-            }
-        } catch (e) {}
-
-        // Temporarily suppress immediate right-dock recalculation which can
-        // trigger layout reflows that push the dock; instead schedule a
-        // single recalculation shortly after the orientation change to
-        // allow the browser to finish layout.
-        try {
-            _suppressRightDockAdjust = true;
-            // allow layout to settle, then run one recalculation
-            requestAnimationFrame(() => setTimeout(() => { try { _suppressRightDockAdjust = false; adjustRightDockColumns(); } catch(e) { _suppressRightDockAdjust = false; } }, 200));
-        } catch (e) { _suppressRightDockAdjust = false; }
-    } catch (e) {}
-}
-
-function toggleLiveOrientation() {
-    try {
-        const pages = document.getElementById('live-pages');
-        if (!pages) return;
-        // Debug: log layout before toggle
-        try { if (typeof debugLogLayout === 'function') debugLogLayout('before-toggle'); } catch (e) {}
-        const isHoriz = pages.classList.toggle('horizontal');
-        const editBtn = document.getElementById('edit-mode-btn');
-        if (editBtn) {
-            if (isHoriz) editBtn.classList.add('active'); else editBtn.classList.remove('active');
-        }
-        localStorage.setItem('liveOrientation', isHoriz ? 'horizontal' : 'vertical');
-        // Apply same safe max-width constraint as above so toggling via
-        // UI also prevents the pages container from expanding into the dock
-        try {
-            const rightDock = document.querySelector('.live-right');
-            const splitter = document.getElementById('live-splitter');
-            const pagesWrapper = document.querySelector('.live-pages-wrapper');
-            const pagesEl = document.getElementById('live-pages');
-            if (isHoriz) {
-                const rawRightW = rightDock ? Math.round(rightDock.getBoundingClientRect().width) : 460;
-                const maxAllowedRight2 = Math.min(Math.round(window.innerWidth * 0.42), 640);
-                const rightW = Math.min(rawRightW, maxAllowedRight2);
-                const splitW = splitter ? Math.round(splitter.getBoundingClientRect().width) : 10;
-                const occupy = rightW + splitW + 24;
-                if (pagesWrapper) pagesWrapper.style.maxWidth = `calc(100% - ${occupy}px)`;
-                if (pagesEl) pagesEl.style.maxWidth = `calc(100% - ${occupy}px)`;
-            } else {
-                if (pagesWrapper) pagesWrapper.style.maxWidth = '';
-                if (pagesEl) pagesEl.style.maxWidth = '';
-            }
-        } catch (e) {}
-
-        try {
-            _suppressRightDockAdjust = true;
-            requestAnimationFrame(() => setTimeout(() => { try { _suppressRightDockAdjust = false; adjustRightDockColumns(); } catch(e) { _suppressRightDockAdjust = false; } }, 200));
-        } catch (e) { _suppressRightDockAdjust = false; }
-        // Debug: log layout after toggle (after a frame so styles applied)
-        try { requestAnimationFrame(() => { try { if (typeof debugLogLayout === 'function') debugLogLayout('after-toggle'); } catch (e) {} }); } catch (e) {}
-    } catch (e) {}
-}
+// Live view uses the default vertical layout.
 
 // Role-based UI: show/hide director-only controls and enforce default mode for attendees
 function updateRoleUI() {
-    // 'edit-mode-btn' has been repurposed to toggle live orientation and is visible to all viewers
+    // Director-only control IDs (hidden for non-directors)
     const directorOnlyIds = ['organize-mode-btn', 'add-charts-btn', 'annotation-btn'];
     directorOnlyIds.forEach(id => {
         const el = document.getElementById(id);
@@ -2678,33 +2634,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     } catch (e) { console.warn('PageManager init failed', e); }
 
-    // Restore any saved currentSession (demo persistence). This helps preserve director/attendee state across reloads.
-    try {
-        const savedSessionRaw = localStorage.getItem('currentSession');
-        if (savedSessionRaw) {
-            const savedSession = JSON.parse(savedSessionRaw);
-            if (savedSession && savedSession.code) {
-                AppState.sessionCode = savedSession.code;
-                AppState.isDirector = !!savedSession.isDirector;
-                AppState.charts = savedSession.charts || [];
-                const uploadCodeEl = document.getElementById('session-code-display');
-                if (uploadCodeEl) uploadCodeEl.textContent = AppState.sessionCode;
-                const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
-                if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
-            }
-        }
-    } catch (e) {
-        console.error('Failed to restore currentSession from localStorage:', e);
-    }
+    // Automatic restoration of saved sessions from localStorage is disabled.
+    // Sessions should not persist unless the server indicates active participants.
 
     // Update UI based on role (director vs attendee)
     try { updateRoleUI(); } catch (e) { /* non-fatal */ }
 
-    // Apply saved live orientation preference (vertical/horizontal)
-    try {
-        const saved = localStorage.getItem('liveOrientation') || 'vertical';
-        setLiveOrientation(saved === 'horizontal');
-    } catch (e) {}
+    // Live layout defaults to vertical.
 
     // Attach click listeners to any theme toggle buttons (present on multiple pages)
     document.querySelectorAll('.theme-toggle').forEach(btn => {
@@ -2801,8 +2737,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const nextChartBtn = document.getElementById('next-chart-btn');
     if (nextChartBtn) nextChartBtn.addEventListener('click', nextChart);
 
-    const editBtn = document.getElementById('edit-mode-btn');
-    if (editBtn) editBtn.addEventListener('click', () => toggleLiveOrientation());
     const liveBtn = document.getElementById('live-mode-btn');
     if (liveBtn) liveBtn.addEventListener('click', () => switchToMode('live'));
 

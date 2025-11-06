@@ -25,8 +25,7 @@
                     if (!window.AppState.sessionCode) {
                         window.AppState.sessionCode = genCode();
                         window.AppState.isDirector = true;
-                        try { localStorage.setItem(`session_${window.AppState.sessionCode}_directorToken`, 'local'); } catch (e) {}
-                        try { localStorage.setItem('currentSession', JSON.stringify({ code: window.AppState.sessionCode, isDirector: true, charts: [] })); } catch (e) {}
+                        try { window.AppState.directorToken = 'local'; } catch (e) {}
                     }
                     // Prefer app-level navigation when available
                     if (typeof showPage === 'function') {
@@ -49,7 +48,7 @@
                     if (code.length !== 6) { alert('Please enter a valid 6-character session code'); return; }
                     if (!window.AppState) window.AppState = {};
                     window.AppState.sessionCode = code;
-                    window.AppState.isDirector = !!localStorage.getItem(`session_${code}_directorToken`);
+                    window.AppState.isDirector = !!(window.AppState && window.AppState.directorToken) || !!localStorage.getItem(`session_${code}_directorToken`);
                     if (typeof showPage === 'function') {
                         try { showPage('viewer'); } catch (e) {}
                         try { if (typeof switchToMode === 'function') switchToMode('live'); } catch (e) {}
@@ -188,18 +187,7 @@
                                 <path d="M5 3v18l15-9z"></path>
                             </svg>
                         </button>
-                        <!-- Repurposed: toggles live orientation (vertical / horizontal) -->
-                        <button id="edit-mode-btn" class="btn btn-icon active" title="Toggle live orientation" aria-label="Toggle live orientation">
-                            <!-- Orientation icon: arrows pointing left/right and up/down to indicate layout toggle -->
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="3" y1="12" x2="21" y2="12"></line>
-                                <polyline points="18 9 21 12 18 15"></polyline>
-                                <polyline points="6 9 3 12 6 15"></polyline>
-                                <line x1="12" y1="3" x2="12" y2="21"></line>
-                                <polyline points="9 6 12 3 15 6"></polyline>
-                                <polyline points="9 18 12 21 15 18"></polyline>
-                            </svg>
-                        </button>
+                        
                         <button id="annotation-btn" class="btn btn-icon" title="Toggle Annotations">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M12 19l7 2-2-7-7-7-5 5z"></path>
@@ -261,9 +249,6 @@
                 <!-- Live Mode View: attendee-facing continuous scroll with thumbnails -->
                 <div id="live-view" class="view">
                     <div class="live-container">
-                            <!-- left dock for movable modules (can accept chat/thumbs) -->
-                            <aside class="live-dock-left live-module-dock" aria-label="Module dock left"></aside>
-
                             <div class="live-pages-wrapper">
                                 <div id="live-pages" class="live-pages"></div>
                             </div>

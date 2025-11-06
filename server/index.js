@@ -108,12 +108,23 @@ wss.on('connection', (ws, req) => {
       if (j && j.type === 'subscribe' && j.session) {
         const code = (j.session || '').toString().toUpperCase();
         ws.session = code;
-        if (!sessionClients.has(code)) sessionClients.set(code, new Set());
-  sessionClients.get(code).add(ws);
-  try { console.log(`WS subscribe: client added to session ${code} (clients=${sessionClients.get(code).size})`); } catch (e) {}
-  try { appendChatDebug(`subscribe session=${code} clients=${sessionClients.get(code).size} pid=${process.pid}`); } catch (e) {}
-        // mark activity when a client subscribes and (re)schedule inactivity cleanup
-        try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
+              if (!sessionClients.has(code)) sessionClients.set(code, new Set());
+              sessionClients.get(code).add(ws);
+              try { console.log(`WS subscribe: client added to session ${code} (clients=${sessionClients.get(code).size})`); } catch (e) {}
+              try { appendChatDebug(`subscribe session=${code} clients=${sessionClients.get(code).size} pid=${process.pid}`); } catch (e) {}
+              // mark activity when a client subscribes and (re)schedule inactivity cleanup
+              try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
+
+              // If the subscribe message included a directorToken and it matches the
+              // session's director token, mark this websocket as the director so we
+              // can react to director disconnects.
+              try {
+                if (j && j.token && store[code] && store[code].directorToken && j.token === store[code].directorToken) {
+                  ws.isDirector = true;
+                  try { console.log(`WS subscribe: director connected for session ${code}`); } catch (e) {}
+                  try { appendChatDebug(`director_connect session=${code} pid=${process.pid}`); } catch (e) {}
+                }
+              } catch (e) {}
       }
       // Allow clients to push single-page updates which will be broadcast to session members
       if (j && j.type === 'page:update' && j.session && j.pageId && j.page && typeof j.page === 'object') {
@@ -192,12 +203,31 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     if (ws.session && sessionClients.has(ws.session)) {
       const code = ws.session;
-      sessionClients.get(code).delete(ws);
-      // if no clients remain, don't delete immediately; schedule cleanup instead
-      if (sessionClients.get(code).size === 0) {
+      const clients = sessionClients.get(code);
+      clients.delete(ws);
+
+      // If this websocket was the director, remove the session immediately
+      // and disconnect remaining clients.
+      if (ws.isDirector) {
+        try { appendChatDebug(`director_disconnect session=${code}`); } catch (e) {}
+        // Close all remaining clients for this session
+        const remaining = sessionClients.get(code) || new Set();
+        remaining.forEach(c => {
+          try { c.close(); } catch (e) {}
+        });
         try { sessionClients.delete(code); } catch (e) {}
-        try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
+        try { deleteSession(code); } catch (e) {}
+        return;
       }
+
+      // If no clients remain, delete the session immediately per new policy
+      if (!sessionClients.has(code) || sessionClients.get(code).size === 0) {
+        try { sessionClients.delete(code); } catch (e) {}
+        try { deleteSession(code); } catch (e) {}
+        return;
+      }
+      // otherwise update lastActivity and reschedule cleanup
+      try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
     }
   });
 });
@@ -218,16 +248,12 @@ function deleteSession(code) {
 function scheduleInactivityCleanup(code) {
   try {
     if (!store[code]) return;
-    const DELAY_MS = 75 * 60 * 1000; // 75 minutes
+  const DELAY_MS = 35 * 60 * 1000; // 35 minutes
 
     const clients = sessionClients.get(code) || new Set();
-    // If no connected clients, schedule deletion after inactivity window instead
+    // If no connected clients, delete the session immediately per new policy.
     if (clients.size === 0) {
-      // schedule a delayed deletion (DELAY_MS) to allow short disconnects and
-      // to keep chat history available briefly for new joiners.
-      if (cleanupTimers.has(code)) { clearTimeout(cleanupTimers.get(code)); cleanupTimers.delete(code); }
-      const tid0 = setTimeout(() => { try { deleteSession(code); } catch (e) {} ; if (cleanupTimers.has(code)) cleanupTimers.delete(code); }, DELAY_MS);
-      cleanupTimers.set(code, tid0);
+      try { deleteSession(code); } catch (e) {}
       return;
     }
 
@@ -397,6 +423,38 @@ app.get('/api/sessions/:code/charts', (req, res) => {
   // treat chart fetch as activity
   try { s.lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } catch (e) {}
   res.json({ charts: s.charts || [], pages: s.pages || {} });
+});
+
+// Validate director token
+app.post('/api/sessions/:code/validate-token', (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const token = req.header('x-director-token');
+  const s = store[code];
+  if (!s) return res.status(404).json({ error: 'not_found' });
+  if (!token || token !== s.directorToken) return res.status(403).json({ error: 'forbidden' });
+  // token matches
+  try { s.lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } catch (e) {}
+  return res.json({ ok: true });
+});
+
+// Delete session (director only)
+app.delete('/api/sessions/:code', (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const token = req.header('x-director-token');
+  const s = store[code];
+  if (!s) return res.status(404).json({ error: 'not_found' });
+  if (!token || token !== s.directorToken) return res.status(403).json({ error: 'forbidden' });
+
+  // Remove immediately and persist
+  try {
+    deleteSession(code);
+    persist();
+    // broadcast an empty charts update to any connected clients (they will be removed shortly)
+    try { broadcastSessionUpdate(code); } catch (e) {}
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: 'delete_failed' });
+  }
 });
 
 server.listen(PORT, () => {
