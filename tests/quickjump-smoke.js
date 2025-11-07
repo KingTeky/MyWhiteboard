@@ -28,15 +28,51 @@ const fs = require('fs');
   const context = vm.createContext(window);
   const appSrc = fs.readFileSync('./app.js', 'utf8');
   try {
-    vm.runInContext(appSrc, context, { filename: 'app.js' });
+    // Provide minimal browser-like globals that app.js expects
+    try { window.localStorage = window.localStorage || { getItem: () => null, setItem: () => {}, removeItem: () => {} }; } catch (e) {}
+    try { window.pdfjsLib = window.pdfjsLib || { getDocument: (src) => ({ promise: Promise.resolve({ numPages: 1, getPage: async (n) => ({ getViewport: ({ scale }) => ({ width: 100, height: 100 }), render: ({ canvasContext, viewport }) => ({ promise: Promise.resolve() }) }) }) }) }; } catch (e) {}
+    try { window.Sortable = window.Sortable || null; } catch (e) {}
+    // Evaluate the app code and catch any thrown errors so we can debug
+    try {
+      vm.runInContext(appSrc, context, { filename: 'app.js' });
+    } catch (innerErr) {
+      console.error('Error while evaluating app.js in VM:');
+      console.error(innerErr && innerErr.stack ? innerErr.stack : innerErr);
+      // dump a short snippet of the file for context
+      console.error('\n--- app.js snippet (first 400 chars) ---\n' + appSrc.slice(0, 400));
+      process.exit(3);
+    }
   } catch (e) {
-    console.error('Error evaluating app.js:', e);
-    process.exit(3);
+    console.error('Unexpected error preparing VM context:', e && e.stack ? e.stack : e);
+    process.exit(4);
   }
 
-  // Instantiate SidebarManager
-  if (!window.SidebarManager) { console.error('SidebarManager not found'); process.exit(4); }
-  window._sidebarManager = new window.SidebarManager();
+  // Try to locate SidebarManager in the evaluated context. Some top-level
+  // declarations (class/function) may not be attached as properties on the
+  // global object. Attempt several probes and then bind it to window if found.
+  try {
+    let found = null;
+    try { found = vm.runInContext('typeof SidebarManager !== "undefined" ? SidebarManager : null', context); } catch (e) { found = null; }
+    if (!found) {
+      try { found = vm.runInContext('typeof globalThis !== "undefined" && typeof globalThis.SidebarManager !== "undefined" ? globalThis.SidebarManager : null', context); } catch (e) { found = null; }
+    }
+    if (!found) {
+      try { found = vm.runInContext('typeof this !== "undefined" && typeof this.SidebarManager !== "undefined" ? this.SidebarManager : null', context); } catch (e) { found = null; }
+    }
+    if (!found) {
+      // as a last resort, scan global property names for likely candidates
+      const keys = Object.getOwnPropertyNames(window).filter(Boolean);
+      console.warn('SidebarManager not found on window; available top-level keys:', keys.slice(0,200));
+      console.error('SidebarManager not found');
+      process.exit(4);
+    }
+    // bind to window for test convenience
+    window.SidebarManager = found;
+    window._sidebarManager = new window.SidebarManager();
+  } catch (e) {
+    console.error('Failed to instantiate SidebarManager:', e && e.stack ? e.stack : e);
+    process.exit(5);
+  }
 
   function thumbCount() { return window.document.querySelectorAll('#sidebar-quick-jump .sidebar-thumb').length; }
 
