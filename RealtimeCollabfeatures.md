@@ -1,4 +1,4 @@
-That’s a really sharp architectural refinement, Eli — you’re essentially describing a **modular layout system** where the *core live charts* remain fixed and reliable on the left (non‑negotiable for musicians), while the **right‑hand sidebar becomes a flexible dock** that can host multiple modules (thumbnails, chat, maybe even future tools like timers or cues).
+That’s a really sharp architectural refinement, Eli — you’re essentially describing a **modular layout system** where the *core live charts* remain fixed and reliable on the left (non‑negotiable for musicians), while the **right‑hand sidebar becomes a flexible dock** that can host multiple modules (Quick Jump, chat, maybe even future tools like timers or cues).
 
 Here’s how you can structure it:
 
@@ -12,13 +12,13 @@ Here’s how you can structure it:
 
 ### 2. **Right Pane (Modular Dock)**
 - A **stack of modules** that can be:
-  - **Thumbnails Navigator** (page previews, reorderable, jump‑to‑page).
+  - **Quick Jump Navigator** (page previews, reorderable, jump‑to‑page).
   - **Realtime Chat** (band leader, pastor, production team).
   - **Future modules** (e.g., setlist notes, timers, cues).
 - Each module is:
   - **Resizable** (drag to change height).
   - **Collapsible** (hide/show).
-  - **Reorderable** (drag‑and‑drop to move chat above thumbnails, or vice versa).
+  - **Reorderable** (drag‑and‑drop to move chat above Quick Jump, or vice versa).
 
 ---
 
@@ -41,7 +41,7 @@ interface SidebarModule {
   collapse?(): void;
 }
 ```
-This way, **Thumbnails** and **Chat** are just two implementations of the same contract.
+This way, **Quick Jump** and **Chat** are just two implementations of the same contract.
 
 ### C. **Drag-and-Drop Reordering**
 - Use a lightweight library (e.g., `SortableJS`) or native HTML5 drag‑and‑drop.
@@ -52,10 +52,10 @@ This way, **Thumbnails** and **Chat** are just two implementations of the same c
 - Messages scoped to the session code.
 - UI: minimal, large readable text, quick‑send buttons for common cues (“Repeat chorus”, “Bridge next”, “Key change”).
 
-### E. **Thumbnails Module**
+### E. **Quick Jump Module**
 - Render page previews (small canvases).
-- Clicking a thumbnail scrolls the left pane to that page.
-- Supports reordering (dragging thumbnails changes page order in the session).
+- Clicking a preview scrolls the left pane to that page.
+- Supports reordering (dragging previews changes page order in the session).
 
 ---
 
@@ -68,16 +68,16 @@ This way, **Thumbnails** and **Chat** are just two implementations of the same c
 
 ## 🔮 Next Step
 I’d suggest scaffolding a **`SidebarManager`** component that:
-- Registers modules (`chat`, `thumbnails`, etc.).
+- Registers modules (`chat`, `quick-jump`, etc.).
 - Handles drag‑drop reordering.
 - Persists layout state.
 - Renders modules in the right pane.
 
 ---
 
-👉 Do you want me to draft a **component diagram** showing `LiveCharts`, `SidebarManager`, `ChatModule`, and `ThumbnailsModule` so you can drop it into your planning docs? That would give you a clear visual of how these pieces interact.
+👉 Do you want me to draft a **component diagram** showing `LiveCharts`, `SidebarManager`, `ChatModule`, and `QuickJumpModule` so you can drop it into your planning docs? That would give you a clear visual of how these pieces interact.
 
-Perfect — here’s a **component diagram** for the modular Live Mode you described, showing how the fixed scrollable charts interact with the flexible sidebar modules (thumbnails, chat, etc.). You can drop this straight into your planning docs as a **Mermaid diagram**:
+Perfect — here’s a **component diagram** for the modular Live Mode you described, showing how the fixed scrollable charts interact with the flexible sidebar modules (Quick Jump, chat, etc.). You can drop this straight into your planning docs as a **Mermaid diagram**:
 
 ```mermaid
 flowchart LR
@@ -92,15 +92,15 @@ flowchart LR
             SidebarManager["SidebarManager\n(Module Container)"]
 
             subgraph Modules["Modules (Reorderable/Collapsible)"]
-                Thumbnails["ThumbnailsModule\n(Page Previews, Jump-to)"]
+                QuickJump["QuickJumpModule\n(Page Previews, Jump-to)"]
                 Chat["ChatModule\n(Realtime Messages)"]
                 Future["FutureModule\n(Timers, Notes, Cues)"]
             end
         end
     end
 
-    Charts <--> Thumbnails
-    SidebarManager --> Thumbnails
+  Charts <--> QuickJump
+  SidebarManager --> QuickJump
     SidebarManager --> Chat
     SidebarManager --> Future
 ```
@@ -110,11 +110,12 @@ flowchart LR
 ## 🔍 How to Read This
 - **LiveCharts**: Always fixed on the left, vertical scroll, large readable pages.
 - **SidebarManager**: A controller that manages the right-hand dock.
-- **Modules**: Independent, pluggable units (Thumbnails, Chat, Future).
+
+ **Modules**: Independent, pluggable units (Quick Jump, Chat, Future).
   - Each module implements a simple API (`render`, `resize`, `collapse`).
   - Users can reorder modules (drag-and-drop), resize them, or collapse them.
-- **Interaction**:
-  - Thumbnails → scrolls the left pane to the right page.
+ **Interaction**:
+  - Quick Jump → scrolls the left pane to the right page.
   - Chat → realtime WebSocket messages scoped to the session.
   - Future modules → can be added without changing the core.
 
@@ -123,15 +124,30 @@ flowchart LR
 ## 🛠️ Next Steps
 1. **Scaffold `SidebarManager`** as a container with drag‑drop ordering.
 2. **Define a Module API** so each sidebar feature is pluggable.
-3. **Implement ThumbnailsModule** first (since it already exists conceptually).
+3. **Implement Quick Jump Module** first (since it already exists conceptually).
 4. **Add ChatModule** with WebSocket integration.
 5. **Persist layout state** (order, size, collapsed state) in `localStorage` or session config.
 
 ---
 
-👉 Do you want me to also sketch the **Module API contract** in code (TypeScript/JS interface) so you can enforce consistency across Thumbnails, Chat, and future modules?
+👉 Do you want me to also sketch the **Module API contract** in code (TypeScript/JS interface) so you can enforce consistency across Quick Jump, Chat, and future modules?
 
-Here’s a clean **Module API contract** you can drop into your docs or codebase. This gives you a consistent way to build sidebar modules (Thumbnails, Chat, future tools) so they all plug into the `SidebarManager` without special‑casing:
+Here’s a clean **Module API contract** you can drop into your docs or codebase. This gives you a consistent way to build sidebar modules (Quick Jump, Chat, future tools) so they all plug into the `SidebarManager` without special‑casing:
+
+---
+
+## 🛠️ Next Steps
+1. **Scaffold `SidebarManager`** as a container with drag‑drop ordering.
+2. **Define a Module API** so each sidebar feature is pluggable.
+3. **Implement Quick Jump Module** first (since it already exists conceptually).
+4. **Add ChatModule** with WebSocket integration.
+5. **Persist layout state** (order, size, collapsed state) in `localStorage` or session config.
+
+---
+
+👉 Do you want me to also sketch the **Module API contract** in code (TypeScript/JS interface) so you can enforce consistency across Quick Jump, Chat, and future modules?
+
+Here’s a clean **Module API contract** you can drop into your docs or codebase. This gives you a consistent way to build sidebar modules (Quick Jump, Chat, future tools) so they all plug into the `SidebarManager` without special‑casing:
 
 ---
 
@@ -170,20 +186,20 @@ export interface SidebarModule {
 
 ## 🧩 Example Implementations
 
-### Thumbnails Module
+### Quick Jump Module
 ```ts
-const ThumbnailsModule: SidebarModule = {
-  id: "thumbnails",
-  title: "Page Thumbnails",
+const QuickJumpModule: SidebarModule = {
+  id: "quick-jump",
+  title: "Quick Jump",
   render(container) {
     // Render page previews here
     // Attach click handlers to scroll LiveCharts
   },
   resize(newSize) {
-    // Adjust thumbnail grid/list size
+    // Adjust preview grid/list size
   },
   collapse() {
-    // Hide thumbnails but keep header
+    // Hide previews but keep header
   }
 };
 ```
@@ -217,30 +233,30 @@ const ChatModule: SidebarModule = {
 
 ---
 
-This way, your **LiveCharts** remain untouched on the left, while the right‑hand sidebar becomes a **true plugin system**. You can add Chat, Thumbnails, or any future module (like timers, setlists, or cues) without rewriting the layout logic.
+This way, your **LiveCharts** remain untouched on the left, while the right‑hand sidebar becomes a **true plugin system**. You can add Chat, Quick Jump, or any future module (like timers, setlists, or cues) without rewriting the layout logic.
 
 ---
 
-👉 Do you want me to also sketch a **Mermaid sequence diagram** showing how `SidebarManager` loads modules and how, for example, the ThumbnailsModule triggers a scroll in LiveCharts? That would illustrate the runtime interactions clearly.
+👉 Do you want me to also sketch a **Mermaid sequence diagram** showing how `SidebarManager` loads modules and how, for example, the QuickJumpModule triggers a scroll in LiveCharts? That would illustrate the runtime interactions clearly.
 
-Here’s a **Mermaid sequence diagram** that shows how the `SidebarManager`, `ThumbnailsModule`, and `LiveCharts` interact at runtime. This illustrates the flow when a user clicks a thumbnail and how the sidebar modules are loaded and managed:
+Here’s a **Mermaid sequence diagram** that shows how the `SidebarManager`, `QuickJumpModule`, and `LiveCharts` interact at runtime. This illustrates the flow when a user clicks a preview and how the sidebar modules are loaded and managed:
 
 ```mermaid
 sequenceDiagram
     participant User
     participant SidebarManager
-    participant ThumbnailsModule
+  participant QuickJumpModule
     participant ChatModule
     participant LiveCharts
 
     User->>SidebarManager: Open Live Mode
-    SidebarManager->>ThumbnailsModule: render(container)
+  SidebarManager->>QuickJumpModule: render(container)
     SidebarManager->>ChatModule: render(container)
 
-    Note over SidebarManager,ThumbnailsModule: Sidebar modules are initialized and displayed in the right pane
+  Note over SidebarManager,QuickJumpModule: Sidebar modules are initialized and displayed in the right pane
 
-    User->>ThumbnailsModule: Click thumbnail (Page 3)
-    ThumbnailsModule->>SidebarManager: emit("navigateToPage", 3)
+  User->>QuickJumpModule: Click preview (Page 3)
+  QuickJumpModule->>SidebarManager: emit("navigateToPage", 3)
     SidebarManager->>LiveCharts: scrollToPage(3)
 
     Note over LiveCharts: LiveCharts scrolls to Page 3 in the left pane
@@ -256,8 +272,8 @@ sequenceDiagram
 ---
 
 ## 🔍 What This Shows
-- **Initialization**: `SidebarManager` loads and renders each module (Thumbnails, Chat, etc.).
-- **Navigation Flow**: Clicking a thumbnail triggers an event → `SidebarManager` → `LiveCharts` scrolls to the right page.
+- **Initialization**: `SidebarManager` loads and renders each module (Quick Jump, Chat, etc.).
+- **Navigation Flow**: Clicking a preview triggers an event → `SidebarManager` → `LiveCharts` scrolls to the right page.
 - **Chat Flow**: Sending a chat message emits an event → `SidebarManager` broadcasts to all modules → optional cue overlay in `LiveCharts`.
 
 ---

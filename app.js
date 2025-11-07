@@ -16,7 +16,7 @@ function escapeHtml(text) {
 // small visual flash on a sidebar thumb when its content changes
 function flashThumb(pageId) {
     try {
-        const container = document.getElementById('sidebar-thumbs');
+    const container = document.getElementById('sidebar-quick-jump');
         if (!container) return;
         const el = container.querySelector(`.sidebar-thumb[data-page-id="${pageId}"]`);
         if (!el) return;
@@ -132,6 +132,8 @@ function createSession() {
                         AppState.directorToken = j.directorToken;
                         try {
                             localStorage.setItem(`session_${j.code}_directorToken`, j.directorToken);
+                            // default the creator's chat role to MD for this session
+                            try { localStorage.setItem(`chat_role_${j.code}`, 'MD'); } catch (e) {}
                             localStorage.setItem('session_current_code', j.code);
                             localStorage.setItem('session_current_directorToken', j.directorToken);
                             console.info('Persisted director token for session', j.code, j);
@@ -205,13 +207,13 @@ function joinSession() {
     (async () => {
         try {
             const res = await fetch(`${SERVER_BASE}/api/sessions/${code}`);
-            if (res.ok) {
-                const j = await res.json();
-                AppState.charts = j.charts || [];
-            } else if (sessionData) {
-                const session = JSON.parse(sessionData);
-                AppState.charts = session.charts || [];
-            }
+                if (res.ok) {
+                    const j = await res.json();
+                    AppState.charts = j.charts || [];
+                } else if (sessionData) {
+                    const session = JSON.parse(sessionData);
+                    AppState.charts = session.charts || [];
+                }
         } catch (e) {
             if (sessionData) {
                 const session = JSON.parse(sessionData);
@@ -229,6 +231,8 @@ function joinSession() {
             renderCurrentChart();
             // ensure websocket subscription for live updates (no-op if already subscribed)
             try { sendSubscribeIfNeeded(); } catch (e) {}
+                try { refreshQuickJump(); } catch (e) {}
+                try { window.dispatchEvent(new CustomEvent('charts:changed')); } catch (e) {}
         } else {
             alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
         }
@@ -262,6 +266,7 @@ function startSession() {
     if (!AppState.sessionCode) {
         AppState.sessionCode = generateSessionCode();
         AppState.isDirector = true;
+        try { localStorage.setItem(`chat_role_${AppState.sessionCode}`, 'MD'); } catch (e) {}
         const codeEl = document.getElementById('session-code-display');
         if (codeEl) codeEl.textContent = AppState.sessionCode;
     const viewerCodeTextEl = document.getElementById('viewer-session-code-text');
@@ -368,6 +373,37 @@ async function leaveSession() {
     // Update UI to a neutral state (no director controls visible)
     updateRoleUI();
     showPage('landing');
+
+    // ensure Quick Jump is cleared
+    try { refreshQuickJump(); } catch (e) {}
+
+    // Close and remove any floating windows or session-specific modals that
+    // were created for this session (chat, thumbnails, editors, etc.). When
+    // returning to the landing page we want a clean slate.
+    try {
+        // Remove floating windows (chat, thumbs, any other floating panels)
+        const floats = Array.from(document.querySelectorAll('.floating-window'));
+        floats.forEach(f => {
+            try {
+                // call hide if available to run any hide logic, then remove DOM node
+                if (typeof f.hide === 'function') try { f.hide(); } catch (e) {}
+                if (f.parentNode) f.parentNode.removeChild(f);
+            } catch (e) {}
+        });
+
+        // Close any session modals (pages editor) and remove their content
+        const pagesModal = document.getElementById('pages-editor-modal');
+        if (pagesModal) {
+            try { pagesModal.setAttribute('aria-hidden', 'true'); pagesModal.classList.remove('visible'); } catch (e) {}
+            try { const grid = document.getElementById('pages-editor-grid'); if (grid) grid.innerHTML = ''; } catch (e) {}
+            try {
+                // replace backdrop/close/done nodes to remove leftover handlers
+                const backdrop = document.getElementById('pages-editor-backdrop'); if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+                const closeBtn = document.getElementById('pages-editor-close'); if (closeBtn && closeBtn.parentNode) closeBtn.parentNode.removeChild(closeBtn);
+                const doneBtn = document.getElementById('pages-editor-done'); if (doneBtn && doneBtn.parentNode) doneBtn.parentNode.removeChild(doneBtn);
+            } catch (e) {}
+        }
+    } catch (e) {}
 }
 
 // Page Navigation
@@ -379,6 +415,7 @@ function showPage(pageName) {
     if (targetPage) {
         targetPage.classList.add('active');
         AppState.currentPage = pageName;
+                try { refreshQuickJump(); } catch (e) {}
     }
 }
 
@@ -411,6 +448,9 @@ function addChartToSession(name, dataUrl) {
     try { if (AppState.isDirector) switchToMode('organize'); } catch (e) {}
     renderOrganizeMode();
     saveSessionCharts();
+    // ensure Quick Jump reflects new chart
+    try { refreshQuickJump(); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('charts:changed')); } catch (e) {}
 }
 
 function displayUploadedFile(chart) {
@@ -458,12 +498,15 @@ function removeChart(chartId) {
     } catch (err) {
         console.error('Error saving session after removeChart:', err);
     }
+    // Always signal that charts changed so Quick Jump and other UI react
+    try { window.dispatchEvent(new CustomEvent('charts:changed')); } catch (e) {}
     if (AppState.viewMode === 'organize') {
         // adjust current chart index if needed
         if (AppState.currentChartIndex >= AppState.charts.length) {
             AppState.currentChartIndex = Math.max(0, AppState.charts.length - 1);
         }
         renderOrganizeMode();
+        try { refreshQuickJump(); } catch (e) {}
     }
 }
 
@@ -547,7 +590,7 @@ function renderCurrentChart() {
 function renderLiveMode() {
     // Render all charts in order as a continuous scroll; thumbnails represent each page across charts.
     const pagesContainer = document.getElementById('live-pages');
-    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs') || null;
+    const thumbsContainer = document.querySelector('#live-quick-jump-module .module-content') || document.querySelector('.live-quick-jump') || null;
     if (!pagesContainer) return;
     pagesContainer.innerHTML = '';
     if (thumbsContainer) thumbsContainer.innerHTML = '';
@@ -823,11 +866,16 @@ function renderLiveChatModule(container) {
         // load recent chat history
         try {
             const sessionCode = AppState.sessionCode;
-            if (sessionCode) {
+                if (sessionCode) {
                 fetch(`${SERVER_BASE}/api/sessions/${sessionCode}/chat`).then(r => { if (!r.ok) throw new Error('chat fetch failed'); return r.json(); }).then(data => {
                     const list = Array.isArray(data.chat) ? data.chat : [];
                     list.forEach(m => {
-                        try { if (m && m.id) container._chatIds.add(m.id); const own = (m.from === (AppState.isDirector ? 'Director' : 'Viewer')); appendToLive(msgs, m, { own, container }); } catch (e) {}
+                        try {
+                            if (m && m.id) container._chatIds.add(m.id);
+                            // Do not mark historical messages as "own" based on Director/Viewer labels.
+                            // The app no longer exposes a 'Director' identity in the chat; role is used instead.
+                            appendToLive(msgs, m, { container });
+                        } catch (e) {}
                     });
                 }).catch(err => console.warn('Failed to load chat history', err));
             }
@@ -837,7 +885,7 @@ function renderLiveChatModule(container) {
     const roleRow = document.createElement('div'); roleRow.style.display = 'flex'; roleRow.style.gap = '8px'; roleRow.style.alignItems = 'center';
     const roleLabel = document.createElement('div'); roleLabel.textContent = 'Role:'; roleLabel.style.fontSize = '0.85rem'; roleLabel.style.color = 'var(--text-secondary)'; roleRow.appendChild(roleLabel);
     const roleSelect = document.createElement('select'); roleSelect.className = 'chat-role-select'; ['Pastor','Worship Leader','Production','Musician','MD'].forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r; roleSelect.appendChild(o); }); roleRow.appendChild(roleSelect);
-    try { const roleKey = `chat_role_${AppState.sessionCode || 'global'}`; const saved = localStorage.getItem(roleKey); if (saved) roleSelect.value = saved; } catch (e) {}
+        try { const roleKey = `chat_role_${AppState.sessionCode || 'global'}`; const saved = localStorage.getItem(roleKey); roleSelect.value = saved || (AppState.isDirector ? 'MD' : 'Musician'); } catch (e) {}
     roleSelect.addEventListener('change', () => { try { localStorage.setItem(`chat_role_${AppState.sessionCode || 'global'}`, roleSelect.value); } catch (e) {} });
 
     const form = document.createElement('div'); form.className = 'chat-input'; form.style.display = 'flex'; form.style.gap = '6px';
@@ -856,13 +904,34 @@ function renderLiveChatModule(container) {
                 // reconcile pending
                 if (msg.clientTempId && container._pendingMap && container._pendingMap[msg.clientTempId]) {
                     const pendingEl = container._pendingMap[msg.clientTempId]; pendingEl.classList.remove('pending'); try { pendingEl.dataset.msgId = msg.id; } catch (e) {}
-                    try { const meta = pendingEl.querySelector('.chat-meta'); if (meta) meta.textContent = `${msg.from || msg.role || 'User'}` + (msg.role ? ` • ${msg.role}` : ''); const body = pendingEl.querySelector('.chat-body'); if (body) body.textContent = msg.text || ''; } catch (e) {}
+                        try {
+                            // rebuild the chat-body so it follows the new inline format: ROLE : MESSAGE
+                            const body = pendingEl.querySelector('.chat-body');
+                            if (body) {
+                                try { body.innerHTML = ''; } catch (e) { body.textContent = ''; }
+                                const displayRole = msg.role || (msg.from === 'Director' ? 'MD' : (msg.from || 'User'));
+                                const roleSpan = document.createElement('span'); roleSpan.className = 'chat-role-inline'; roleSpan.textContent = displayRole;
+                                const sep = document.createElement('span'); sep.className = 'chat-role-sep'; sep.textContent = ' : ';
+                                const textSpan = document.createElement('span'); textSpan.className = 'chat-text'; textSpan.textContent = msg.text || '';
+                                try { body.appendChild(roleSpan); body.appendChild(sep); body.appendChild(textSpan); } catch (e) { body.textContent = `${displayRole} : ${msg.text || ''}`; }
+                            }
+                        } catch (e) {}
                     if (msg.id) container._chatIds.add(msg.id); delete container._pendingMap[msg.clientTempId]; return;
                 }
                 if (msg.id && container._chatIds.has(msg.id)) return;
                 const el = document.createElement('div'); el.className = 'chat-msg'; const roleClass = msg.role ? `role-${msg.role.toLowerCase().replace(/\s+/g,'-')}` : ''; if (roleClass) el.classList.add(roleClass); if (opts.own) el.classList.add('own');
-                const meta = document.createElement('div'); meta.className = 'chat-meta'; meta.style.fontSize = '0.75rem'; meta.style.color = 'var(--text-secondary)'; meta.style.marginBottom = '4px'; meta.textContent = `${msg.from || msg.role || 'User'}` + (msg.role ? ` • ${msg.role}` : ''); el.appendChild(meta);
-                const body = document.createElement('div'); body.className = 'chat-body'; body.textContent = msg.text || ''; el.appendChild(body);
+                // Build inline body: <span.role>ROLE</span><span.sep> : </span><span.text>message</span>
+                const body = document.createElement('div'); body.className = 'chat-body';
+                try {
+                    const displayRole = msg.role || (msg.from === 'Director' ? 'MD' : (msg.from || 'User'));
+                    const roleSpan = document.createElement('span'); roleSpan.className = 'chat-role-inline'; roleSpan.textContent = displayRole;
+                    const sep = document.createElement('span'); sep.className = 'chat-role-sep'; sep.textContent = ' : ';
+                    const textSpan = document.createElement('span'); textSpan.className = 'chat-text'; textSpan.textContent = msg.text || '';
+                    body.appendChild(roleSpan); body.appendChild(sep); body.appendChild(textSpan);
+                } catch (e) {
+                    body.textContent = `${msg.role || msg.from || 'User'} : ${msg.text || ''}`;
+                }
+                el.appendChild(body);
                 if (msg.id) { try { el.dataset.msgId = msg.id; } catch (e) {} container._chatIds.add(msg.id); }
                 if (msg.clientTempId && !msg.id) { try { el.dataset.tempId = msg.clientTempId; } catch (e) {} el.classList.add('pending'); container._pendingMap[msg.clientTempId] = el; }
                 msgsEl.appendChild(el);
@@ -891,7 +960,8 @@ function renderLiveChatModule(container) {
         sendBtn.addEventListener('click', () => {
             try {
                 const text = (input.value || '').trim(); if (!text) return; const role = roleSelect.value || 'Musician'; const clientTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-                const payload = { type: 'chat:message', session: AppState.sessionCode, from: AppState.isDirector ? 'Director' : 'Viewer', role, text, clientTempId };
+                // Do not expose Director identity in messages. Use the selected role as the sender label.
+                const payload = { type: 'chat:message', session: AppState.sessionCode, from: role, role, text, clientTempId };
                 appendToLive(msgs, payload, { own: true });
                 if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify(payload)); else showToast('Not connected to server', 900);
                 input.value = '';
@@ -915,17 +985,18 @@ function createFloatingWindow(name, title, extraClass) {
     win.className = `floating-window ${extraClass || ''}`;
     win.style.position = 'fixed';
     win.style.right = '20px';
-    win.style.top = name === 'thumbs' ? '120px' : '80px';
+    // place the Quick Jump/Thumbs window slightly lower by default
+    win.style.top = (name === 'thumbs' || name === 'quick-jump') ? '120px' : '80px';
     win.style.zIndex = 1200;
 
     const header = document.createElement('div');
     header.className = 'floating-header';
     header.innerHTML = `<div class="floating-title">${escapeHtml(title || name)}</div>`;
-    // For chat and thumbnails we don't show the small close 'x' because
-    // the modules are toggled via their header buttons. Other floating
-    // windows still get a close button.
+    // For chat and thumbnails (Quick Jump) we don't show the small close 'x'
+    // because the modules are toggled via their header buttons. Other
+    // floating windows still get a close button.
     let closeBtn = null;
-    if (name !== 'chat' && name !== 'thumbs') {
+    if (name !== 'chat' && name !== 'thumbs' && name !== 'quick-jump') {
         closeBtn = document.createElement('button');
         closeBtn.className = 'floating-close';
         closeBtn.title = 'Close';
@@ -938,9 +1009,37 @@ function createFloatingWindow(name, title, extraClass) {
     content.className = 'floating-content';
     win.appendChild(content);
 
-    // show/hide helpers
-    win.show = function() { win.classList.add('visible'); win.style.display = ''; };
-    win.hide = function() { win.classList.remove('visible'); win.style.display = 'none'; };
+    // helper to map floating window name to its header toggle button id
+    function _toggleButtonIdForWindow(n) {
+        if (!n) return null;
+        if (n === 'chat') return 'chat-toggle-btn';
+        if (n === 'thumbs' || n === 'quick-jump') return 'quickjump-toggle-btn';
+        return null;
+    }
+
+    // show/hide helpers (also sync the header toggle button's active state and aria-pressed)
+    win.show = function() {
+        win.classList.add('visible');
+        win.style.display = '';
+        try {
+            const btnId = _toggleButtonIdForWindow(name);
+            if (btnId) {
+                const b = document.getElementById(btnId);
+                if (b) { b.classList.add('active'); b.setAttribute('aria-pressed', 'true'); }
+            }
+        } catch (e) {}
+    };
+    win.hide = function() {
+        win.classList.remove('visible');
+        win.style.display = 'none';
+        try {
+            const btnId = _toggleButtonIdForWindow(name);
+            if (btnId) {
+                const b = document.getElementById(btnId);
+                if (b) { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); }
+            }
+        } catch (e) {}
+    };
     win.toggle = function() { if (win.classList.contains('visible')) win.hide(); else win.show(); };
 
     // close button (if present)
@@ -974,6 +1073,76 @@ function createFloatingWindow(name, title, extraClass) {
     return win;
 }
 
+// Refresh Quick Jump UI (sidebar module and any open floating Quick Jump)
+function refreshQuickJump() {
+    try {
+        // Re-render sidebar module if present
+        if (window._sidebarManager) {
+            try { window._sidebarManager.renderModules(); } catch (e) {}
+            try {
+                const rec = window._sidebarManager.moduleMap && window._sidebarManager.moduleMap['quick-jump'];
+                if (rec && rec.el && rec.module && typeof rec.module.render === 'function') {
+                    const content = rec.el.querySelector('.module-content');
+                    if (content) rec.module.render(content);
+                }
+            } catch (e) {}
+        }
+
+        // Update floating quick-jump if open
+        try {
+            const floatWin = document.getElementById('floating-quick-jump-window');
+            if (floatWin) {
+                const content = floatWin.querySelector('.floating-content');
+                if (content) {
+                    content.innerHTML = '';
+                    if (window._sidebarManager && window._sidebarManager.moduleMap && window._sidebarManager.moduleMap['quick-jump']) {
+                        const mod = window._sidebarManager.moduleMap['quick-jump'].module;
+                        if (mod && typeof mod.render === 'function') {
+                            try { mod.render(content); } catch (e) {}
+                        }
+                    } else {
+                        // fallback rendering: first page per chart in AppState order
+                        try {
+                            const serialized = window._pageManager ? window._pageManager.serialize() : { charts: [], pages: {} };
+                            const pagesMap = serialized.pages || {};
+                            const pmCharts = serialized.charts || [];
+                            const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                            if (!orderedCharts.length) content.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
+                            else orderedCharts.forEach((appCh, idx) => {
+                                try {
+                                    const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
+                                    const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
+                                    if (!firstPageId) return;
+                                    const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
+                                    const pid = firstPageId;
+                                    const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                                    const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                    if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                                    else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                    item.appendChild(imgWrap);
+                                    const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                    try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                    item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                                    content.appendChild(item);
+                                } catch (e) {}
+                            });
+                        } catch (e) {}
+                    }
+                }
+            }
+        } catch (e) {}
+    } catch (e) {}
+}
+
+// Listen for a centralized charts change event so other parts of the app
+// can trigger a Quick Jump refresh without having to call the helper
+// directly. This is robust across async call sites and reduces coupling.
+try {
+    window.addEventListener && window.addEventListener('charts:changed', () => {
+        try { refreshQuickJump(); } catch (e) {}
+    });
+} catch (e) {}
+
 function toggleFloatingChat() {
     try {
         const btn = document.getElementById('chat-toggle-btn');
@@ -1001,8 +1170,11 @@ function toggleFloatingChat() {
 
 function toggleFloatingThumbs() {
     try {
-        const btn = document.getElementById('thumbs-toggle-btn');
-        const win = createFloatingWindow('thumbs', 'Thumbnails', 'thumbs');
+        // button id updated to quickjump-toggle-btn
+        const btn = document.getElementById('quickjump-toggle-btn');
+    // module id renamed to 'quick-jump' and floating
+    // window 'quick-jump' labeled 'Quick Jump'
+        const win = createFloatingWindow('quick-jump', 'Quick Jump', 'quick-jump');
         win.toggle();
         if (win.classList.contains('visible')) {
             // render thumbnails module into floating content using SidebarManager's thumbnails renderer when available
@@ -1010,24 +1182,43 @@ function toggleFloatingThumbs() {
             if (content) {
                 try {
                     content.innerHTML = '';
-                    if (window._sidebarManager && window._sidebarManager.moduleMap && window._sidebarManager.moduleMap['thumbnails']) {
-                        const mod = window._sidebarManager.moduleMap['thumbnails'].module;
+                    if (window._sidebarManager && window._sidebarManager.moduleMap && window._sidebarManager.moduleMap['quick-jump']) {
+                        const mod = window._sidebarManager.moduleMap['quick-jump'].module;
                         if (mod && typeof mod.render === 'function') mod.render(content);
                     } else {
                         // fallback: mirror sidebar thumbnails
-                        const pages = window._pageManager ? window._pageManager.serialize().pages || {} : {};
-                        const ids = Object.keys(pages || {});
-                        if (!ids.length) content.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
-                        else ids.forEach(pid => {
-                            const p = pages[pid] || {};
-                            const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
-                            const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
-                            if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
-                            else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml((p.name||'').toString().slice(0,12))}</div>`;
-                            item.appendChild(imgWrap);
-                            const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = p.name || pid; item.appendChild(label);
-                            item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
-                            content.appendChild(item);
+                        // Show only the first page of each chart for Quick Jump to keep navigation compact
+                        const serialized = window._pageManager ? window._pageManager.serialize() : { charts: [], pages: {} };
+                        const pagesMap = serialized.pages || {};
+                        const pmCharts = serialized.charts || [];
+                        // Use AppState.charts order (organize mode order) when available; fall back to PageManager order
+                        const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                        if (!orderedCharts.length) content.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
+                        else orderedCharts.forEach((appCh, idx) => {
+                            try {
+                                // find matching chart metadata from PageManager serialize (contains pageMap)
+                                const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
+                                const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
+                                if (!firstPageId) return;
+                                const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
+                                const pid = firstPageId;
+                                const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                                const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                                else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                item.appendChild(imgWrap);
+                                const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                // chart order badge (1-based index) - Quick Jump specific
+                                try {
+                                    const order = (typeof idx === 'number') ? (idx + 1) : '';
+                                    const orderBadge = document.createElement('div');
+                                    orderBadge.className = 'quickjump-order-badge';
+                                    orderBadge.textContent = String(order);
+                                    item.appendChild(orderBadge);
+                                } catch (e) {}
+                                item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                                content.appendChild(item);
+                            } catch (e) {}
                         });
                     }
                 } catch (e) {}
@@ -1063,7 +1254,7 @@ function sendPageUpdate(pageId) {
 // SidebarManager: renders thumbnails for pages (one-per-page) and provides click-to-jump
 class SidebarManager {
     constructor(opts = {}) {
-        this.container = document.getElementById('sidebar-thumbs');
+    this.container = document.getElementById('sidebar-quick-jump');
         // modules: ordered list of module ids
         this.modules = [];
         // mapping id -> module object and DOM references
@@ -1076,17 +1267,17 @@ class SidebarManager {
             const aside = document.getElementById('sidebar');
             if (aside) {
                 const div = document.createElement('div');
-                div.id = 'sidebar-thumbs';
-                div.className = 'sidebar-thumbs';
+                div.id = 'sidebar-quick-jump';
+                div.className = 'sidebar-quick-jump';
                 aside.appendChild(div);
                 this.container = div;
             }
         }
 
-        // Register a default thumbnails module that mirrors previous behavior
-        const thumbnailsModule = {
-            id: 'thumbnails',
-            title: 'Thumbnails',
+        // Register a default Quick Jump module (previously called 'thumbnails')
+        const quickJumpModule = {
+            id: 'quick-jump',
+            title: 'Quick Jump',
             render: (contentEl) => {
                 try {
                     contentEl.innerHTML = '';
@@ -1094,30 +1285,48 @@ class SidebarManager {
                         contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
                         return;
                     }
-                    const pages = window._pageManager.serialize().pages || {};
-                    const ids = Object.keys(pages || {});
-                    if (!ids.length) { contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>'; return; }
-                    ids.forEach(pid => {
-                        const p = pages[pid] || {};
-                        const item = document.createElement('div');
-                        item.className = 'sidebar-thumb';
-                        item.dataset.pageId = pid;
-                        item.style.position = item.style.position || 'relative';
-                        const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
-                        if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = `page ${pid}`; imgWrap.appendChild(img); }
-                        else { imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml((p.name||'').toString().slice(0,12))}</div>`; }
-                        item.appendChild(imgWrap);
-                        const badge = document.createElement('div'); badge.className = 'thumb-changed-badge'; badge.textContent = 'Updated'; item.appendChild(badge);
-                        const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = p.name || pid; item.appendChild(label);
-                        item.addEventListener('click', () => { this.onThumbClick(pid); });
-                        contentEl.appendChild(item);
+                    // Only show the first page of each uploaded chart to keep Quick Jump concise.
+                    const serialized = window._pageManager.serialize() || {};
+                    const pmCharts = serialized.charts || [];
+                    const pagesMap = serialized.pages || {};
+                    // Use AppState.charts order (organize mode order) when available; fall back to PageManager order
+                    const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                    if (!orderedCharts.length) { contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>'; return; }
+                    orderedCharts.forEach((appCh, idx) => {
+                        try {
+                            const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
+                            const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
+                            if (!firstPageId) return;
+                            const p = pagesMap[firstPageId] || window._pageManager.getPage(firstPageId) || {};
+                            const pid = firstPageId;
+                            const item = document.createElement('div');
+                            item.className = 'sidebar-thumb';
+                            item.dataset.pageId = pid;
+                            item.style.position = item.style.position || 'relative';
+                            const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                            if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = `page ${pid}`; imgWrap.appendChild(img); }
+                            else { imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`; }
+                            item.appendChild(imgWrap);
+                                const badge = document.createElement('div'); badge.className = 'thumb-changed-badge'; badge.textContent = 'Updated'; item.appendChild(badge);
+                                // chart order badge (1-based index) - Quick Jump specific
+                            try {
+                                const order = (typeof idx === 'number') ? (idx + 1) : '';
+                                const orderBadge = document.createElement('div');
+                                orderBadge.className = 'quickjump-order-badge';
+                                orderBadge.textContent = String(order);
+                                item.appendChild(orderBadge);
+                            } catch (e) { /* non-fatal */ }
+                            const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                            item.addEventListener('click', () => { this.onThumbClick(pid); });
+                            contentEl.appendChild(item);
+                        } catch (e) { /* non-fatal per-chart */ }
                     });
                 } catch (e) { /* non-fatal */ }
             }
         };
 
         // register default module and render
-        this.registerModule(thumbnailsModule, { atEnd: true });
+        this.registerModule(quickJumpModule, { atEnd: true });
         this.restoreLayout();
         this.renderModules();
     }
@@ -1291,8 +1500,13 @@ class SidebarManager {
             if (!raw) return;
             const p = JSON.parse(raw);
             if (p && Array.isArray(p.order)) {
+                // Map legacy module ids to new ids (non-destructive migration).
+                // Previously the thumbnails module used id 'thumbnails'. If a
+                // stored layout references 'thumbnails', map it to 'quick-jump'
+                // so existing user layouts continue to work.
+                const storedOrder = p.order.map(id => (id === 'thumbnails' ? 'quick-jump' : id));
                 // ensure modules referenced exist; otherwise append missing
-                const order = p.order.filter(id => !!this.moduleMap[id]);
+                const order = storedOrder.filter(id => !!this.moduleMap[id]);
                 // append any registered modules not in order
                 Object.keys(this.moduleMap).forEach(id => { if (order.indexOf(id) === -1) order.push(id); });
                 this.modules = order;
@@ -1304,9 +1518,16 @@ class SidebarManager {
                     if (!raw2) return;
                     const p2 = JSON.parse(raw2);
                     if (p2 && p2.collapsed) {
-                        Object.keys(p2.collapsed).forEach(id => {
+                        // Map legacy collapsed keys as well so previously-collapsed
+                        // modules remain collapsed after the rename.
+                        const collapsedMap = {};
+                        Object.keys(p2.collapsed).forEach(k => {
+                            const mapped = (k === 'thumbnails') ? 'quick-jump' : k;
+                            collapsedMap[mapped] = p2.collapsed[k];
+                        });
+                        Object.keys(collapsedMap).forEach(id => {
                             const rec = this.moduleMap[id];
-                            if (rec && rec.el && p2.collapsed[id]) rec.el.classList.add('collapsed');
+                            if (rec && rec.el && collapsedMap[id]) rec.el.classList.add('collapsed');
                         });
                     }
                 } catch (e) {}
@@ -1478,9 +1699,12 @@ function handleServerChartsUpdate(serverCharts) {
     // show toast to indicate update
     showToast('Session updated by Music Director');
 
+    // Ensure Quick Jump reflects server-side changes
+    try { refreshQuickJump(); } catch (e) {}
+
     // show a small live-update badge near thumbnails
     try {
-    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs');
+    const thumbsContainer = document.querySelector('#live-quick-jump-module .module-content') || document.querySelector('.live-quick-jump');
         if (thumbsContainer) {
             let badge = thumbsContainer.querySelector('.live-update-badge');
             if (!badge) {
@@ -1553,7 +1777,7 @@ function handleServerChartsUpdate(serverCharts) {
 // IntersectionObserver to highlight current page/thumbnail
 function initLiveHighlighting() {
     const pagesContainer = document.getElementById('live-pages');
-    const thumbsContainer = document.querySelector('#live-thumbs-module .module-content') || document.querySelector('.live-thumbs');
+    const thumbsContainer = document.querySelector('#live-quick-jump-module .module-content') || document.querySelector('.live-quick-jump');
     if (!pagesContainer || !thumbsContainer) return;
 
     if (_highlightObserver) {
@@ -1711,6 +1935,7 @@ async function fetchAndUpdateCharts() {
             if (AppState.viewMode === 'organize') {
                 renderOrganizeMode();
             }
+            try { refreshQuickJump(); } catch (e) {}
         }
     } catch (e) {
         // ignore transient network errors during polling
@@ -1977,6 +2202,9 @@ function reorderCharts(fromIndex, toIndex) {
     // after reordering, update any UI and persist
     renderOrganizeMode();
     saveSessionCharts();
+    // Update Quick Jump to reflect the new organize order
+    try { refreshQuickJump(); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('charts:changed')); } catch (e) {}
 }
 
 function saveSessionCharts() {
@@ -2918,9 +3146,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Header toggles for floating chat and thumbnails
     const chatToggle = document.getElementById('chat-toggle-btn');
-    if (chatToggle) chatToggle.addEventListener('click', toggleFloatingChat);
-    const thumbsToggle = document.getElementById('thumbs-toggle-btn');
-    if (thumbsToggle) thumbsToggle.addEventListener('click', toggleFloatingThumbs);
+    if (chatToggle) {
+        chatToggle.setAttribute('aria-pressed', 'false');
+        chatToggle.addEventListener('click', toggleFloatingChat);
+    }
+    // Quick Jump toggle button (renamed from thumbs-toggle-btn)
+    const quickjumpToggle = document.getElementById('quickjump-toggle-btn');
+    if (quickjumpToggle) {
+        quickjumpToggle.setAttribute('aria-pressed', 'false');
+        quickjumpToggle.addEventListener('click', toggleFloatingThumbs);
+    }
 
     const annotationBtn = document.getElementById('annotation-btn');
     if (annotationBtn) annotationBtn.addEventListener('click', toggleAnnotationMode);

@@ -505,9 +505,46 @@ input[type="text"]::placeholder {
     margin-left: auto;
 }
 
-/* Header toggle buttons for floating chat/thumbnails */
-#chat-toggle-btn, #thumbs-toggle-btn {
+/* Header toggle buttons for floating chat / Quick Jump */
+#chat-toggle-btn, #quickjump-toggle-btn {
     position: relative;
+}
+
+/* Quick Jump SVG lettermark: keep same visual size as other icon buttons */
+#quickjump-toggle-btn svg.quickjump-icon {
+    width: 20px;
+    height: 20px;
+    display: block;
+}
+
+#quickjump-toggle-btn svg.quickjump-icon text {
+    fill: currentColor;
+    font-weight: 700;
+    font-size: 20px;
+    line-height: 1;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+/* Give Chat and Quick Jump their own blue active highlight to match other
+   active header controls (organize/live/annotation). These selectors only
+   apply when the .active class is present and won't affect hover states. */
+#chat-toggle-btn.active,
+#quickjump-toggle-btn.active {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff; /* ensures SVG text/icon picks up white */
+    box-shadow: 0 6px 18px rgba(59,130,246,0.14);
+}
+
+#chat-toggle-btn.active svg,
+#quickjump-toggle-btn.active svg {
+    color: #fff; /* stroke/fill via currentColor */
+}
+
+#chat-toggle-btn:focus-visible,
+#quickjump-toggle-btn:focus-visible {
+    outline: 2px solid rgba(59,130,246,0.24);
+    outline-offset: 2px;
 }
 
 /* Unread pulse glow for chat button: soothing orange translucent glow */
@@ -530,7 +567,7 @@ input[type="text"]::placeholder {
     width: 360px;
     max-width: calc(100vw - 40px);
     height: fit-content;
-    max-height: 300px;
+    max-height: 360px;
     background: var(--card-background);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -572,8 +609,8 @@ input[type="text"]::placeholder {
 /* Small handle when dragging to keep pointer interactions smooth */
 .floating-window.dragging { opacity: 0.98; transform: translateZ(0); }
 
-/* Make the thumbnails floating window a bit wider by default */
-.floating-window.thumbs { width: 420px; height: 420px; }
+/* Make the thumbnails / Quick Jump floating window a bit wider by default */
+.floating-window.quick-jump { width: 420px; height: 420px; }
 
 /* Separate the leave button from the other mode controls to reduce accidental clicks */
 .viewer-controls #leave-session-btn {
@@ -706,23 +743,9 @@ header .theme-toggle,
 }
 
 /* Main scrollable chart area */
-.live-pages {
-    flex: 1 1 auto;
-    overflow: auto;
-    min-height: 0; /* important for flex children to allow internal scrolling */
-    -webkit-overflow-scrolling: touch;
-    padding: 12px;
-    height: 100%;
-}
-
-/* Individual page wrapper and overlay canvas */
-.live-page-wrapper { margin-bottom: 16px; }
-.live-annotation-canvas { position: absolute; left:0; top:0; width:100%; height:100%; z-index:3; pointer-events: none; }
-
-/* Navigation thumbnails: fixed-width column with its own scrollbar */
-.live-thumbs {
+.live-quick-jump {
     /* The legacy .live-thumbs selector previously acted as a sidebar
-       column. Thumbnails rendered inside module content should use the
+       column. Thumbnails (Quick Jump) rendered inside module content should use the
        grid rules above; keep this rule but make it non-intrusive for
        module-content instances. */
     flex: 0 0 180px;
@@ -736,6 +759,7 @@ header .theme-toggle,
     /* use a larger min column so modules don’t get squeezed into unreadable widths */
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
+
 /* Make each module visually separate and prevent them from overlapping
    the live pages. Modules should be normal flow block elements inside docks. */
 .live-module {
@@ -767,17 +791,17 @@ header .theme-toggle,
 .sortable-chosen { outline: 2px dashed rgba(37,99,235,0.16); }
 
 /* Allow thumbs column to be resized by JS changing inline flex-basis/width */
-.live-thumbs[aria-resizable="true"] { transition: none; }
+.live-quick-jump[aria-resizable="true"] { transition: none; }
 
 /* Optional: make thumbnails layout vertical and not wrap */
-.live-thumbs .thumb {
+.live-quick-jump .thumb {
     display: block;
     margin-bottom: 8px;
     cursor: pointer;
 }
 
 /* The code uses .live-thumb for generated thumbnails - ensure styling matches */
-.live-thumbs .live-thumb {
+.live-quick-jump .live-thumb {
     display: block;
     margin-bottom: 8px;
     cursor: pointer;
@@ -896,7 +920,7 @@ header .theme-toggle,
 /* make the pages and thumbs independently scrollable in the live container */
 .live-container { align-items: stretch; }
 .live-pages { overflow: auto; }
-.live-thumbs { overflow: auto; }
+.live-quick-jump { overflow: auto; }
 
 /* Upload area container: center the drop-zone within the page */
 .upload-area {
@@ -1296,8 +1320,7 @@ header .theme-toggle,
     padding: 12px;
     box-shadow: var(--shadow-sm);
 }
-
-#sidebar-thumbs {
+#sidebar-quick-jump {
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1316,6 +1339,8 @@ header .theme-toggle,
     transition: background-color 180ms ease, transform 120ms ease;
     border: 1px solid transparent;
 }
+/* ensure positioned badges inside thumbnails have a positioned parent */
+.sidebar-thumb { position: relative; }
 .sidebar-thumb:hover {
     background: var(--hover);
 }
@@ -1364,6 +1389,36 @@ header .theme-toggle,
     transition: opacity 180ms ease, transform 180ms ease;
 }
 .sidebar-thumb.flash .thumb-changed-badge { opacity: 1; transform: translateY(0); }
+
+/* chart order badge: small numeric indicator for Quick Jump thumbnails */
+.sidebar-thumb .chart-order-badge {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    background: rgba(0,0,0,0.65);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    z-index: 5;
+}
+
+/* distinct Quick Jump order badge to avoid collisions with organize view badges */
+.sidebar-thumb .quickjump-order-badge {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    background: rgba(0,0,0,0.65);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    z-index: 5;
+}
 
 /* Apply consistent thumbnail styling to live-mode thumbnails */
 .live-thumb {
@@ -1556,7 +1611,7 @@ header .theme-toggle,
 }
 
 /* Role-specific message colors */
-.chat-msg.role-pastor { border-left: 4px solid #f91616; background: rgba(248, 43, 16, 0.06); }
+.chat-msg.role-pastor { border-left: 4px solid #f91616; background: rgba(248, 43, 16, 0.349); }
 .chat-msg.role-worship-leader { border-left: 4px solid #60a5fa; background: rgba(96,165,250,0.05); }
 .chat-msg.role-production { border-left: 4px solid #a78bfa; background: rgba(167,139,250,0.05); }
 .chat-msg.role-musician { border-left: 4px solid #34d399; background: rgba(52,211,153,0.05); }
@@ -1564,4 +1619,15 @@ header .theme-toggle,
 .chat-msg.role-md, .chat-msg.role-MD { border-left: 4px solid #f97316; background: rgba(249,115,22,0.06); }
 
 .chat-msg .chat-body { font-size: 0.95rem; color: var(--text-primary); }
+/* Inline role + message layout: show role to the left of the message text */
+.chat-msg .chat-body { font-size: 0.95rem; color: var(--text-primary); display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
+.chat-role-inline {
+    font-weight: 700;
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+.chat-role-sep { color: var(--text-secondary); flex: 0 0 auto; }
+.chat-text { color: var(--text-primary); word-break: break-word; flex: 1 1 auto; }
+
 .chat-msg .chat-meta { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }
