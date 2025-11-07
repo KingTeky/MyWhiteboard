@@ -1769,8 +1769,38 @@ function handleServerChartsUpdate(serverCharts) {
         }
     } catch (e) {}
 
-    // update state (do not persist to localStorage here)
-    AppState.charts = serverChartsArr;
+    // Merge server ordering with local ordering deterministically.
+    // Strategy:
+    // - Preserve the director's local relative order for charts that exist locally.
+    // - Keep local-only charts (not yet known to server) in their local positions.
+    // - Append any server-only charts (new charts from other clients) in server order.
+    // This produces a predictable merged ordering that respects local edits
+    // while incorporating remote additions/deletions.
+    try {
+        const localCharts = Array.isArray(AppState.charts) ? AppState.charts.slice() : [];
+        const remoteCharts = Array.isArray(serverChartsArr) ? serverChartsArr.slice() : [];
+
+        const localIds = localCharts.map(c => String(c.id));
+        const remoteIds = remoteCharts.map(c => String(c.id));
+
+        // mergedIds: start with local order (preserves local relative ordering and local-only items)
+        const mergedIds = [];
+        localIds.forEach(id => { if (!mergedIds.includes(id)) mergedIds.push(id); });
+        // then append remote-only ids in remote order
+        remoteIds.forEach(id => { if (!mergedIds.includes(id)) mergedIds.push(id); });
+
+        // maps for picking authoritative chart objects: prefer local chart object when available
+        const localMap = {};
+        localCharts.forEach(c => { try { localMap[String(c.id)] = c; } catch (e) {} });
+        const remoteMap = {};
+        remoteCharts.forEach(c => { try { remoteMap[String(c.id)] = c; } catch (e) {} });
+
+        const mergedCharts = mergedIds.map(id => (localMap[id] || remoteMap[id])).filter(Boolean);
+        AppState.charts = mergedCharts;
+    } catch (e) {
+        // fallback to server ordering if merge fails for any reason
+        try { AppState.charts = serverChartsArr; } catch (err) { AppState.charts = serverChartsArr || []; }
+    }
 
     // update PageManager with server pages if available
     try {
