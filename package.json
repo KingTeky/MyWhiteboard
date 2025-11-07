@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.0"
+  },
+  "dependencies": {
+    "jsdom": "^27.1.0"
   }
 }
