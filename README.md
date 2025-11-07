@@ -198,3 +198,23 @@ This project is open source and available under the MIT License.
 ## Support
 
 For issues, questions, or suggestions, please open an issue on GitHub.
+
+## Smoke test (quickjump)
+
+There is a small smoke test that uses jsdom to verify the Quick Jump module updates when charts are added, removed, or reordered.
+
+Run the test locally:
+
+1. Install jsdom as a dev dependency:
+
+```bash
+npm install jsdom --save-dev
+```
+
+2. Run the smoke script:
+
+```bash
+node tests/quickjump-smoke.js
+```
+
+The script will print PASS on success or an error message if Quick Jump did not update as expected.

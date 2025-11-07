@@ -1134,14 +1134,7 @@ function refreshQuickJump() {
     } catch (e) {}
 }
 
-// Listen for a centralized charts change event so other parts of the app
-// can trigger a Quick Jump refresh without having to call the helper
-// directly. This is robust across async call sites and reduces coupling.
-try {
-    window.addEventListener && window.addEventListener('charts:changed', () => {
-        try { refreshQuickJump(); } catch (e) {}
-    });
-} catch (e) {}
+// note: Quick Jump now subscribes to 'charts:changed' internally inside SidebarManager
 
 function toggleFloatingChat() {
     try {
@@ -1280,6 +1273,7 @@ class SidebarManager {
             title: 'Quick Jump',
             render: (contentEl) => {
                 try {
+                    console.debug && console.debug('QuickJump.render called');
                     contentEl.innerHTML = '';
                     if (!window._pageManager) {
                         contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
@@ -1299,6 +1293,8 @@ class SidebarManager {
                             if (!firstPageId) return;
                             const p = pagesMap[firstPageId] || window._pageManager.getPage(firstPageId) || {};
                             const pid = firstPageId;
+                            // debug hint
+                            try { console.debug && console.debug('QuickJump: rendering chart', (appCh && appCh.id), 'as index', idx); } catch (e) {}
                             const item = document.createElement('div');
                             item.className = 'sidebar-thumb';
                             item.dataset.pageId = pid;
@@ -1329,6 +1325,65 @@ class SidebarManager {
         this.registerModule(quickJumpModule, { atEnd: true });
         this.restoreLayout();
         this.renderModules();
+
+        // Subscribe to charts changes so Quick Jump updates itself when charts are added/removed/reordered.
+        try {
+            if (window && window.addEventListener) {
+                window.addEventListener('charts:changed', () => {
+                    try { console.debug && console.debug('QuickJump received charts:changed event'); } catch (e) {}
+                    try {
+                        const rec = this.moduleMap && this.moduleMap['quick-jump'];
+                        if (rec && rec.module && typeof rec.module.render === 'function') {
+                            const content = rec.el && rec.el.querySelector('.module-content');
+                            if (content) {
+                                try { rec.module.render(content); } catch (err) { console.error('QuickJump render failed on charts:changed', err); }
+                            }
+                        }
+                        // also refresh any open floating Quick Jump
+                        try {
+                            const floatWin = document.getElementById('floating-quick-jump-window');
+                            if (floatWin) {
+                                const fContent = floatWin.querySelector('.floating-content');
+                                if (fContent) {
+                                    // prefer module render
+                                    if (rec && rec.module && typeof rec.module.render === 'function') {
+                                        try { rec.module.render(fContent); } catch (err) { console.error('QuickJump floating render failed', err); }
+                                    } else {
+                                        // minimal fallback rendering
+                                        try {
+                                            const serialized = window._pageManager ? window._pageManager.serialize() : { charts: [], pages: {} };
+                                            const pagesMap = serialized.pages || {};
+                                            const pmCharts = serialized.charts || [];
+                                            const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                                            fContent.innerHTML = '';
+                                            if (!orderedCharts.length) fContent.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
+                                            else orderedCharts.forEach((appCh, idx) => {
+                                                try {
+                                                    const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
+                                                    const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
+                                                    if (!firstPageId) return;
+                                                    const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
+                                                    const pid = firstPageId;
+                                                    const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                                                    const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                                    if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                                                    else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                                    item.appendChild(imgWrap);
+                                                    const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                                    try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                                    item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                                                    fContent.appendChild(item);
+                                                } catch (e) {}
+                                            });
+                                        } catch (e) {}
+                                    }
+                                }
+                            }
+                        } catch (e) {}
+                    } catch (e) {}
+                });
+            }
+        } catch (e) {}
     }
 
     // Register a module object that implements { id, title, render(container), optional: collapse, expand, resize, destroy }
