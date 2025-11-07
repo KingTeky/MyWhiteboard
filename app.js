@@ -1739,6 +1739,36 @@ function handleServerChartsUpdate(serverCharts) {
     const remote = JSON.stringify(serverChartsArr || []);
     if (local === remote && (!window._pageManager || JSON.stringify(window._pageManager.serialize().pages || {}) === JSON.stringify(serverPages || {}))) return; // nothing changed
 
+    // If the local user is the director and we recently performed a local
+    // reorder, prefer the local ordering for a short window to avoid a race
+    // where the server broadcasts an older ordering before it has applied
+    // the director's change. If the server payload differs but the last
+    // local hash matches current local state and is recent, ignore the
+    // server ordering (but still update pages if provided).
+    try {
+        const now = Date.now();
+        const lastHash = window._lastLocalChartsHash || null;
+        const lastTs = window._lastLocalChartsTs || 0;
+        const recentMs = 3000; // 3s grace window
+        if (AppState.isDirector && lastHash && (now - lastTs) < recentMs) {
+            // if remote differs from our last local arrangement, skip replacing
+            if (remote !== lastHash) {
+                console.debug && console.debug('handleServerChartsUpdate: ignoring server order update because of recent local reorder');
+                // still update PageManager pages if payload includes them
+                try {
+                    if (window._pageManager && serverPages && Object.keys(serverPages).length) {
+                        window._pageManager.deserialize({ charts: serverChartsArr, pages: serverPages });
+                        try { window._pageManager.persistToLocalStorage(AppState.sessionCode); } catch (e) {}
+                    }
+                } catch (e) {}
+                // refresh UI but keep AppState.charts as-is
+                try { refreshQuickJump(); } catch (e) {}
+                try { if (AppState.viewMode === 'organize') renderOrganizeMode(); if (AppState.viewMode === 'live') renderLiveMode(); } catch (e) {}
+                return;
+            }
+        }
+    } catch (e) {}
+
     // update state (do not persist to localStorage here)
     AppState.charts = serverChartsArr;
 
@@ -2257,6 +2287,13 @@ function reorderCharts(fromIndex, toIndex) {
     // after reordering, update any UI and persist
     renderOrganizeMode();
     saveSessionCharts();
+    // Record local reorder so we can avoid being overwritten by a near-simultaneous
+    // server broadcast. This helps when the director reorders locally and the
+    // server echoes an older ordering back before it has processed the change.
+    try {
+        try { window._lastLocalChartsHash = JSON.stringify(AppState.charts || []); } catch (e) { window._lastLocalChartsHash = null; }
+        try { window._lastLocalChartsTs = Date.now(); } catch (e) { window._lastLocalChartsTs = 0; }
+    } catch (e) {}
     // Update Quick Jump to reflect the new organize order
     try { refreshQuickJump(); } catch (e) {}
     try { window.dispatchEvent(new CustomEvent('charts:changed')); } catch (e) {}
