@@ -264,6 +264,8 @@ wss.on('connection', (ws, req) => {
             if (directorDisconnectTimers.has(code)) {
               clearTimeout(directorDisconnectTimers.get(code));
               directorDisconnectTimers.delete(code);
+              try { console.log(`Cleared director disconnect timer for session ${code}`); } catch (e) {}
+              try { appendChatDebug(`cleared_director_timer session=${code}`); } catch (e) {}
             }
             const tid = setTimeout(() => {
               try {
@@ -280,7 +282,14 @@ wss.on('connection', (ws, req) => {
             try { console.log(`WS director disconnected for session ${code}, scheduled deletion in ${GRACE_MS}ms`); } catch (e) {}
           } else {
             // Other clients remain; keep the session active and clear any director timer
-            try { if (directorDisconnectTimers.has(code)) { clearTimeout(directorDisconnectTimers.get(code)); directorDisconnectTimers.delete(code); } } catch (e) {}
+            try {
+              if (directorDisconnectTimers.has(code)) {
+                clearTimeout(directorDisconnectTimers.get(code));
+                directorDisconnectTimers.delete(code);
+                try { console.log(`Cleared director disconnect timer for session ${code}`); } catch (e) {}
+                try { appendChatDebug(`cleared_director_timer session=${code}`); } catch (e) {}
+              }
+            } catch (e) {}
             try { console.log(`WS director disconnected for session ${code} but ${remaining.size} client(s) remain; session retained`); } catch (e) {}
           }
         } catch (e) { try { deleteSession(code); } catch (err) {} }
@@ -302,15 +311,38 @@ wss.on('connection', (ws, req) => {
 // Helper: remove session data and persist
 function deleteSession(code) {
   try {
+    // Make deleteSession idempotent: if session already removed, just clear
+    // any timers and client sets and return. This prevents duplicated logs
+    // and avoids racing between API delete and scheduled director-cleanup.
     try {
       console.log(`deleteSession: removing session ${code}. store keys before delete: ${Object.keys(store).join(',')}`);
     } catch (e) {}
-    delete store[code];
-    persist();
+    if (!store[code]) {
+      try { console.log(`deleteSession: session ${code} already absent`); } catch (e) {}
+    } else {
+      delete store[code];
+      persist();
+    }
   } catch (e) {
     console.error('Failed to delete session', code, e);
   }
+  // Clear any scheduled inactivity cleanup timer
   try { if (cleanupTimers.has(code)) { clearTimeout(cleanupTimers.get(code)); cleanupTimers.delete(code); } } catch (e) {}
+  // Clear any director disconnect grace timer
+  try {
+    if (directorDisconnectTimers.has(code)) {
+      clearTimeout(directorDisconnectTimers.get(code));
+      directorDisconnectTimers.delete(code);
+      try { console.log(`Cleared director disconnect timer for session ${code}`); } catch (e) {}
+      try { appendChatDebug(`cleared_director_timer session=${code}`); } catch (e) {}
+    }
+  } catch (e) {}
+  // Close and remove any remaining websocket clients for this session
+  try {
+    const clients = sessionClients.get(code) || new Set();
+    clients.forEach(c => { try { c.close(); } catch (e) {} });
+    sessionClients.delete(code);
+  } catch (e) {}
 }
 
 // Schedule inactivity cleanup for a session: delete immediately if no clients;
