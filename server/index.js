@@ -107,23 +107,56 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (msg) => {
     try {
       const j = JSON.parse(msg.toString());
+      // Treat any message that references a session as activity so mode switches
+      // or other lightweight messages don't look like a director disconnect.
+      try {
+        if (j && j.session) {
+          const code = (j.session || '').toString().toUpperCase();
+          if (store[code]) {
+            store[code].lastActivity = Date.now();
+            persist();
+            try { scheduleInactivityCleanup(code); } catch (e) {}
+            // Helpful debug log when clients explicitly signal mode changes
+            try {
+              if (j.type === 'mode:change') {
+                console.log(`WS mode change: session=${code} mode=${j.mode || 'unknown'}`);
+                try { appendChatDebug(`mode_change session=${code} mode=${j.mode||'unknown'}`); } catch (e) {}
+              }
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
       if (j && j.type === 'subscribe' && j.session) {
         const code = (j.session || '').toString().toUpperCase();
         ws.session = code;
               if (!sessionClients.has(code)) sessionClients.set(code, new Set());
-              sessionClients.get(code).add(ws);
-              try { console.log(`WS subscribe: client added to session ${code} (clients=${sessionClients.get(code).size})`); } catch (e) {}
+              const clientsSet = sessionClients.get(code);
+              const alreadySubscribed = clientsSet.has(ws);
+              if (!alreadySubscribed) {
+                clientsSet.add(ws);
+                try { console.log(`WS subscribe: client added to session ${code} (clients=${clientsSet.size})`); } catch (e) {}
+              } else {
+                try { console.log(`WS subscribe: client already subscribed to session ${code} (clients=${clientsSet.size})`); } catch (e) {}
+              }
               try { appendChatDebug(`subscribe session=${code} clients=${sessionClients.get(code).size} pid=${process.pid}`); } catch (e) {}
               // mark activity when a client subscribes and (re)schedule inactivity cleanup
               try { if (store[code]) { store[code].lastActivity = Date.now(); persist(); scheduleInactivityCleanup(code); } } catch (e) {}
+
+              // mark that at least one websocket client has connected for this session
+              try { if (store[code]) { store[code].seenClients = true; persist(); } } catch (e) {}
 
               // If the subscribe message included a directorToken and it matches the
               // session's director token, mark this websocket as the director so we
               // can react to director disconnects.
               try {
                 if (j && j.token && store[code] && store[code].directorToken && j.token === store[code].directorToken) {
+                  const wasDirector = !!ws.isDirector;
                   ws.isDirector = true;
-                  try { console.log(`WS subscribe: director connected for session ${code}`); } catch (e) {}
+                  if (!wasDirector) {
+                    try { console.log(`WS subscribe: director connected for session ${code}`); } catch (e) {}
+                  } else {
+                    try { console.log(`WS subscribe: director already connected for session ${code}`); } catch (e) {}
+                  }
                   try { appendChatDebug(`director_connect session=${code} pid=${process.pid}`); } catch (e) {}
                   // If a director disconnect timer was scheduled, cancel it - director returned
                   try {
@@ -224,23 +257,32 @@ wss.on('connection', (ws, req) => {
         // transient network disconnects don't cause an immediate session removal.
         try {
           const GRACE_MS = parseInt(process.env.DIRECTOR_DISCONNECT_GRACE_MS || '30000', 10);
-          if (directorDisconnectTimers.has(code)) {
-            clearTimeout(directorDisconnectTimers.get(code));
-            directorDisconnectTimers.delete(code);
+          // Only schedule a director-disconnect cleanup if no other clients remain.
+          // If other clients are still connected, do not delete the session.
+          const remaining = sessionClients.get(code) || new Set();
+          if (remaining.size === 0) {
+            if (directorDisconnectTimers.has(code)) {
+              clearTimeout(directorDisconnectTimers.get(code));
+              directorDisconnectTimers.delete(code);
+            }
+            const tid = setTimeout(() => {
+              try {
+                // Close any remaining clients (should be none) and delete session after grace
+                const rem = sessionClients.get(code) || new Set();
+                rem.forEach(c => { try { c.close(); } catch (e) {} });
+                try { sessionClients.delete(code); } catch (e) {}
+                try { deleteSession(code); } catch (e) {}
+                try { appendChatDebug(`director_disconnect_cleanup session=${code}`); } catch (e) {}
+              } catch (e) {}
+              if (directorDisconnectTimers.has(code)) directorDisconnectTimers.delete(code);
+            }, GRACE_MS);
+            directorDisconnectTimers.set(code, tid);
+            try { console.log(`WS director disconnected for session ${code}, scheduled deletion in ${GRACE_MS}ms`); } catch (e) {}
+          } else {
+            // Other clients remain; keep the session active and clear any director timer
+            try { if (directorDisconnectTimers.has(code)) { clearTimeout(directorDisconnectTimers.get(code)); directorDisconnectTimers.delete(code); } } catch (e) {}
+            try { console.log(`WS director disconnected for session ${code} but ${remaining.size} client(s) remain; session retained`); } catch (e) {}
           }
-          const tid = setTimeout(() => {
-            try {
-              // Close any remaining clients and delete session after grace
-              const remaining = sessionClients.get(code) || new Set();
-              remaining.forEach(c => { try { c.close(); } catch (e) {} });
-              try { sessionClients.delete(code); } catch (e) {}
-              try { deleteSession(code); } catch (e) {}
-              try { appendChatDebug(`director_disconnect_cleanup session=${code}`); } catch (e) {}
-            } catch (e) {}
-            if (directorDisconnectTimers.has(code)) directorDisconnectTimers.delete(code);
-          }, GRACE_MS);
-          directorDisconnectTimers.set(code, tid);
-          try { console.log(`WS director disconnected for session ${code}, scheduled deletion in ${GRACE_MS}ms`); } catch (e) {}
         } catch (e) { try { deleteSession(code); } catch (err) {} }
         return;
       }
@@ -287,6 +329,16 @@ function scheduleInactivityCleanup(code) {
     const NEW_SESSION_GRACE_MS = parseInt(process.env.NEW_SESSION_GRACE_MS || '5000', 10);
     if (clients.size === 0) {
       const s = store[code] || {};
+      // If this session has never had any websocket clients subscribe, do not
+      // delete it just because currently no clients are connected. This allows
+      // the director to create a session, upload charts and edit without
+      // immediately opening a websocket. Only delete when the session has had
+      // subscribers previously (seenClients === true) and now all have left.
+      if (!s.seenClients) {
+        // No clients have ever connected -> keep session alive and do nothing.
+        return;
+      }
+
       const age = s.lastActivity ? (Date.now() - s.lastActivity) : Number.POSITIVE_INFINITY;
       if (age < NEW_SESSION_GRACE_MS) {
         // schedule a one-shot re-check after the grace window
@@ -362,8 +414,12 @@ try {
     const s = store[code];
     const clients = sessionClients.get(code) || new Set();
     if (clients.size === 0) {
-      // no connected clients -> delete immediately per policy
-      deleteSession(code);
+      // no connected clients -> delete immediately per policy, but only if
+      // the session had previously seen websocket clients. Preserve newly
+      // created sessions that never had any subscribers.
+      if (s && s.seenClients) {
+        deleteSession(code);
+      }
     } else {
       // clients present on startup (rare) -> schedule inactivity cleanup
       try { scheduleInactivityCleanup(code); } catch (e) { /* ignore */ }
@@ -404,7 +460,10 @@ function generateToken() {
 app.post('/api/sessions', (req, res) => {
   const code = generateCode();
   const directorToken = generateToken();
-  const session = { code, directorToken, charts: [], chat: [], lastActivity: Date.now() };
+  const now = Date.now();
+  // createdAt: when the session was created. seenClients: whether any websocket
+  // client has ever subscribed to this session. These help decide deletion rules.
+  const session = { code, directorToken, charts: [], chat: [], lastActivity: now, createdAt: now, seenClients: false };
   store[code] = session;
   persist();
   try { console.log(`API: created session ${code}`); } catch (e) {}

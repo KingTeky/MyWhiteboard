@@ -529,7 +529,8 @@ input[type="text"]::placeholder {
     top: 80px;
     width: 360px;
     max-width: calc(100vw - 40px);
-    height: 460px;
+    height: fit-content;
+    max-height: 300px;
     background: var(--card-background);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -554,10 +555,16 @@ input[type="text"]::placeholder {
 
 .floating-window .floating-title { font-weight: 700; font-size: 0.95rem; color: var(--text-primary); }
 .floating-window .floating-actions { display:flex; gap:6px; align-items:center; }
-.floating-window .floating-content { padding: 8px; overflow: auto; flex: 1 1 auto; }
-
-/* Ensure floating content can position overlays like the chat fade element */
-.floating-window .floating-content { position: relative; }
+.floating-window .floating-content {
+    padding: 8px;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    /* let the messages area handle scrolling so footer stays pinned */
+    overflow: hidden; /* ensure internal children manage their own scrolling */
+    min-height: 0; /* allows flex children to shrink correctly in overflowing layouts */
+    position: relative;
+}
 
 .floating-close-btn { background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px; }
 .floating-close-btn:hover { background: var(--hover); }
@@ -1429,8 +1436,20 @@ header .theme-toggle,
 
 /* Expanded state when messages exist */
 .chat-messages.chat-expanded {
-    max-height: 360px; /* allow more messages visible before scrolling */
+    max-height: 400px; /* allow more messages visible before scrolling */
     transition: max-height 220ms ease;
+}
+
+/* When the chat module lives inside a floating window, make the messages
+   area flex-grow and allow it to scroll within the floating container so
+   the footer remains pinned at the bottom. This prevents the footer from
+   being pushed below the visible chat box when many messages are present. */
+.floating-window .floating-content .chat-messages {
+    /* let the messages area take remaining vertical space */
+    flex: 1 1 auto;
+    min-height: 0; /* required so Chrome/Edge allow the child to scroll */
+    max-height: none; /* size controlled by flexbox not by this rule */
+    overflow-y: auto;
 }
 
 /* Top fade overlay to softly hide older messages when scrollable */
@@ -1473,6 +1492,63 @@ header .theme-toggle,
 }
 .chat-input-field:focus { border-color: var(--primary-color); }
 
+/* Chat footer: pinned controls (role selector + input) at the bottom of the
+   floating chat window. Kept outside the scrollable .chat-messages so it
+   never scrolls away. */
+.chat-footer {
+    flex: 0 0 auto; /* do not grow or shrink; stay visible */
+    display: flex;
+    flex-direction: column; /* stack role selector above input/send row */
+    gap: 8px;
+    align-items: stretch;
+    padding-top: 8px;
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(0,0,0,0.01), transparent);
+}
+
+/* Role selector sits on its own row and fills available width.
+   Support both .chat-role-select (current code) and .role-select (legacy). */
+.chat-footer .chat-role-select,
+.chat-footer .role-select {
+    /* Allow the select to take remaining space next to its label when
+       rendered inline, but avoid forcing 100% width which can cause
+       overflow when the label is present. Using flex:1 lets it shrink
+       and grow as needed while width:auto prevents exceeding container
+       width when stacked. */
+    flex: 1 1 auto;
+    width: auto;
+    margin-bottom: 4px;
+    min-width: 0; /* ensure it can shrink in flex containers */
+    max-width: 100%;
+    box-sizing: border-box;
+    display: block;
+}
+
+/* Prevent the role select from forcing the footer wider than the container.
+   In flex layouts browsers often apply a non-zero min-width which prevents
+   items from shrinking; setting min-width:0 and max-width:100% ensures the
+   select stays inside the chat window and wraps/flows correctly. */
+.chat-footer .chat-role-select,
+.chat-footer .role-select,
+.chat-footer > div {    /* also allow the row wrapper to shrink */
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* Input + send button remain on a single row beneath the role selector */
+.chat-footer .chat-input {
+    margin-top: 0;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex: 1 1 auto;
+}
+
+.chat-footer .chat-input .chat-input-field { flex: 1 1 auto; }
+.chat-footer .chat-input button { flex: 0 0 auto; }
+
 /* Ensure sidebar modules look good on small screens */
 @media (max-width: 920px) {
     #sidebar { width: 220px; }
@@ -1480,10 +1556,12 @@ header .theme-toggle,
 }
 
 /* Role-specific message colors */
-.chat-msg.role-pastor { border-left: 4px solid #f97316; background: rgba(249,115,22,0.06); }
+.chat-msg.role-pastor { border-left: 4px solid #f91616; background: rgba(248, 43, 16, 0.06); }
 .chat-msg.role-worship-leader { border-left: 4px solid #60a5fa; background: rgba(96,165,250,0.05); }
 .chat-msg.role-production { border-left: 4px solid #a78bfa; background: rgba(167,139,250,0.05); }
 .chat-msg.role-musician { border-left: 4px solid #34d399; background: rgba(52,211,153,0.05); }
+/* Additional role: MD (Music Director) */
+.chat-msg.role-md, .chat-msg.role-MD { border-left: 4px solid #f97316; background: rgba(249,115,22,0.06); }
 
 .chat-msg .chat-body { font-size: 0.95rem; color: var(--text-primary); }
 .chat-msg .chat-meta { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }

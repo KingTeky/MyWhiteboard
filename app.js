@@ -172,15 +172,8 @@ function createSession() {
         if (viewerCodeTextEl) viewerCodeTextEl.textContent = `Session: ${AppState.sessionCode}`;
         // Update UI to reflect director privileges
         updateRoleUI();
-        // If a live websocket exists, subscribe to this session so viewers receive updates
-        try {
-            if (_ws && _ws.readyState === WebSocket.OPEN) {
-                const sub = { type: 'subscribe', session: AppState.sessionCode };
-                const token = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
-                if (token) sub.token = token;
-                _ws.send(JSON.stringify(sub));
-            }
-        } catch (e) {}
+        // If a live websocket exists, ensure subscription (no-op if already subscribed)
+        try { sendSubscribeIfNeeded(); } catch (e) {}
     })().finally(() => { try { AppState.creatingSession = false; } catch (e) {} });
     AppState._creatingPromise = p;
     // clear stored promise when done
@@ -234,15 +227,8 @@ function joinSession() {
             // Attendees should see Live mode by default
             switchToMode('live');
             renderCurrentChart();
-            // ensure websocket subscription for live updates
-            try {
-                if (_ws && _ws.readyState === WebSocket.OPEN) {
-                    const sub = { type: 'subscribe', session: AppState.sessionCode };
-                    const token = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
-                    if (token) sub.token = token;
-                    _ws.send(JSON.stringify(sub));
-                }
-            } catch (e) {}
+            // ensure websocket subscription for live updates (no-op if already subscribed)
+            try { sendSubscribeIfNeeded(); } catch (e) {}
         } else {
             alert('This session has no charts yet. Please wait for the Music Director to upload charts.');
         }
@@ -847,18 +833,21 @@ function renderLiveChatModule(container) {
             }
         } catch (e) {}
 
-        // role selector
-        const roleRow = document.createElement('div'); roleRow.style.display = 'flex'; roleRow.style.gap = '8px'; roleRow.style.alignItems = 'center'; roleRow.style.marginBottom = '8px';
-        const roleLabel = document.createElement('div'); roleLabel.textContent = 'Role:'; roleLabel.style.fontSize = '0.85rem'; roleLabel.style.color = 'var(--text-secondary)'; roleRow.appendChild(roleLabel);
-        const roleSelect = document.createElement('select'); roleSelect.className = 'chat-role-select'; ['Pastor','Worship Leader','Production','Musician'].forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r; roleSelect.appendChild(o); }); roleRow.appendChild(roleSelect);
-        container.appendChild(roleRow);
-        try { const roleKey = `chat_role_${AppState.sessionCode || 'global'}`; const saved = localStorage.getItem(roleKey); if (saved) roleSelect.value = saved; } catch (e) {}
-        roleSelect.addEventListener('change', () => { try { localStorage.setItem(`chat_role_${AppState.sessionCode || 'global'}`, roleSelect.value); } catch (e) {} });
+    // role selector + input should be pinned to bottom inside a chat-footer
+    const roleRow = document.createElement('div'); roleRow.style.display = 'flex'; roleRow.style.gap = '8px'; roleRow.style.alignItems = 'center';
+    const roleLabel = document.createElement('div'); roleLabel.textContent = 'Role:'; roleLabel.style.fontSize = '0.85rem'; roleLabel.style.color = 'var(--text-secondary)'; roleRow.appendChild(roleLabel);
+    const roleSelect = document.createElement('select'); roleSelect.className = 'chat-role-select'; ['Pastor','Worship Leader','Production','Musician','MD'].forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r; roleSelect.appendChild(o); }); roleRow.appendChild(roleSelect);
+    try { const roleKey = `chat_role_${AppState.sessionCode || 'global'}`; const saved = localStorage.getItem(roleKey); if (saved) roleSelect.value = saved; } catch (e) {}
+    roleSelect.addEventListener('change', () => { try { localStorage.setItem(`chat_role_${AppState.sessionCode || 'global'}`, roleSelect.value); } catch (e) {} });
 
-        const form = document.createElement('div'); form.className = 'chat-input'; form.style.display = 'flex'; form.style.gap = '6px';
-        const input = document.createElement('input'); input.type = 'text'; input.placeholder = 'Send a message to session'; input.className = 'chat-input-field'; input.style.flex = '1 1 auto';
-        const sendBtn = document.createElement('button'); sendBtn.className = 'btn btn-primary'; sendBtn.textContent = 'Send';
-        form.appendChild(input); form.appendChild(sendBtn); container.appendChild(form);
+    const form = document.createElement('div'); form.className = 'chat-input'; form.style.display = 'flex'; form.style.gap = '6px';
+    const input = document.createElement('input'); input.type = 'text'; input.placeholder = 'Send a message to session'; input.className = 'chat-input-field'; input.style.flex = '1 1 auto';
+    const sendBtn = document.createElement('button'); sendBtn.className = 'btn btn-primary'; sendBtn.textContent = 'Send';
+    form.appendChild(input); form.appendChild(sendBtn);
+
+    const footer = document.createElement('div'); footer.className = 'chat-footer';
+    footer.style.flex = '0 0 auto'; footer.style.marginTop = '8px'; footer.appendChild(roleRow); footer.appendChild(form);
+    container.appendChild(footer);
 
         function appendToLive(msgsEl, m, opts = {}) {
             try {
@@ -991,8 +980,19 @@ function toggleFloatingChat() {
         const win = createFloatingWindow('chat', 'Chat', 'chat');
         win.toggle();
         if (win.classList.contains('visible')) {
-            // render chat into floating content
-            try { renderLiveChatModule(win.querySelector('.floating-content')); } catch (e) {}
+            // render chat into floating content only when needed. Preserve
+            // existing DOM so closing/opening the panel does not destroy
+            // in-memory/pending messages. Re-render when session changes.
+            try {
+                const content = win.querySelector('.floating-content');
+                const currentSession = AppState.sessionCode || null;
+                if (!content._chatInitialized || content._chatSession !== currentSession) {
+                    // (re)build chat UI for this session
+                    renderLiveChatModule(content);
+                    content._chatInitialized = true;
+                    content._chatSession = currentSession;
+                }
+            } catch (e) {}
             // clear unread badge
             if (btn) btn.classList.remove('chat-unread');
         }
@@ -1316,22 +1316,19 @@ class SidebarManager {
 }
 
 function startLiveSocket() {
-    stopLiveSocket();
     const wsUrl = getWebSocketUrl();
     try {
+        // If we already have an open websocket, reuse it and ensure subscription
+        if (_ws && _ws.readyState === WebSocket.OPEN) {
+            sendSubscribeIfNeeded();
+            return;
+        }
         _ws = new WebSocket(wsUrl);
     } catch (e) { _ws = null; return; }
 
     _ws.addEventListener('open', () => {
-        // subscribe to the session if we have a code
-        if (AppState.sessionCode) {
-            try {
-                const sub = { type: 'subscribe', session: AppState.sessionCode };
-                const token = AppState.directorToken || localStorage.getItem(`session_${AppState.sessionCode}_directorToken`);
-                if (token) sub.token = token;
-                _ws.send(JSON.stringify(sub));
-            } catch (e) { try { _ws.send(JSON.stringify({ type: 'subscribe', session: AppState.sessionCode })); } catch (err) {} }
-        }
+        // ensure we're subscribed on open
+        try { sendSubscribeIfNeeded(); } catch (e) {}
     });
 
     _ws.addEventListener('message', (ev) => {
@@ -1412,6 +1409,26 @@ function startLiveSocket() {
 
     _ws.addEventListener('close', () => { _ws = null; });
     _ws.addEventListener('error', () => { /* ignore */ });
+}
+
+// Send a subscribe message only when necessary. This avoids repeated
+// re-subscriptions when switching view modes. The function records the
+// last subscribed session/token on the websocket so subsequent calls are
+// no-ops unless the session or token changed or the socket was recreated.
+function sendSubscribeIfNeeded() {
+    try {
+        if (!_ws || _ws.readyState !== WebSocket.OPEN) return;
+        const code = AppState.sessionCode;
+        if (!code) return;
+        const token = AppState.directorToken || localStorage.getItem(`session_${code}_directorToken`) || null;
+        // If we already subscribed with the same session/token, skip
+        if (_ws._subscribedSession === code && _ws._subscribedToken === token) return;
+        const sub = { type: 'subscribe', session: code };
+        if (token) sub.token = token;
+        try { _ws.send(JSON.stringify(sub)); } catch (e) {}
+        _ws._subscribedSession = code;
+        _ws._subscribedToken = token;
+    } catch (e) {}
 }
 
 function stopLiveSocket() {
@@ -2081,8 +2098,18 @@ async function switchToMode(mode) {
         if (organizeBtn) organizeBtn.classList.add('active');
         // Start date/time ticker in the header and render organize grid
         startOrganizeTicker();
-        // stop websocket when organizing
-        stopLiveSocket();
+        // Keep websocket open when organizing so the director remains a connected
+        // websocket client. Switching view modes is an in-page activity and should
+        // not be treated as a director disconnect by the server. Previously we
+        // closed the socket here which caused the server to schedule a director
+        // disconnect cleanup. Instead, leave the socket open and send an optional
+        // mode-change message to record activity on the server.
+        try {
+            if (_ws && _ws.readyState === WebSocket.OPEN) {
+                const m = { type: 'mode:change', session: AppState.sessionCode, mode: 'organize' };
+                try { _ws.send(JSON.stringify(m)); } catch (e) {}
+            }
+        } catch (e) {}
         showOrganizeHeaderHelp();
         renderOrganizeMode();
     }
@@ -2639,7 +2666,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                                 const roleSelect = document.createElement('select');
                                 roleSelect.className = 'chat-role-select';
-                                ['Pastor','Worship Leader','Production','Musician'].forEach(r => {
+                                ['Pastor','Worship Leader','Production','Musician','MD'].forEach(r => {
                                     const o = document.createElement('option'); o.value = r; o.textContent = r; roleSelect.appendChild(o);
                                 });
                                 roleRow.appendChild(roleSelect);
