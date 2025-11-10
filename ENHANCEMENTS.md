@@ -1,71 +1,112 @@
 # Project Enhancements (Consolidated)
 
-This document consolidates optional enhancements, feature ideas, and the current status for the MyWhiteboard project. The original, more verbose notes have been archived under `docs/archive/` for reference.
+This document consolidates optional enhancements and feature ideas discovered across the repository. Each suggestion includes a short description, source attribution, and a recommended priority/next step.
 
-## Summary
+Files used as sources:
+- `Optional_Enhancements.MD` (root)
+- `PDFModularity.MD` (root)
+- `RealtimeCollabfeatures.md` (root)
+- `docs/archive/Optional_Enhancements.MD`
+- `docs/archive/PDFModularity.MD`
+- `docs/archive/RealtimeCollabfeatures.md`
 
-- Location of archived originals: `docs/archive/`
-- Purpose: keep the repository root clean while preserving the original planning notes.
+## Consolidated enhancement list
 
-## High-level status (selected items)
+These are the feature ideas and enhancements collected from the repository docs. Where helpful I added a brief implementation note or recommended next step.
 
-- Backend sync (sessions persistence & multi-device): IN PROGRESS / PARTIALLY IMPLEMENTED
-  - A lightweight server exists under `server/` and now supports persisting `pages` with validation limits.
-  - Next: formalize API contracts and authentication for production readiness.
+1) Backend sync (sessions persistence & multi-device)
+  - Description: Add a lightweight backend to persist sessions, charts, and optionally annotations so sessions can be resumed on another device.
+  - Source: `Optional_Enhancements.MD`, `README.md`
+  - Priority: High for multi-device testing (medium for MVP)
+  - Next step: Finalize API contracts under `server/` and add authentication/validation.
 
-### Recent backend / session lifecycle work (2025-11-06)
+2) Real-time collaboration (WebSocket driven)
+  - Description: Use WebSockets to share per-page updates and chat messages across connected clients. Consider OT/CRDT conflict-resolution for concurrent annotation edits.
+  - Source: `RealtimeCollabfeatures.md`, `Optional_Enhancements.MD`, `README.md`
+  - Priority: High (complex)
+  - Next step: Add a message schema (page:update, chart:reorder, chat:message) and a server-side dispatcher; wire a simple authoritative-merge or CRDT approach.
 
-- Prevented a race where an HTTP-created session could be removed before the client opened its WebSocket. Fixes applied:
-  - Client persists the director token in `localStorage` and starts the live WebSocket immediately after creating a server-backed session.
-  - Server implements a short grace window for newly-created sessions (configurable via `NEW_SESSION_GRACE_MS`, default 5000 ms) to avoid immediate deletion before clients subscribe.
-  - Server also schedules a director-disconnect grace window (configurable via `DIRECTOR_DISCONNECT_GRACE_MS`, default 30000 ms) rather than deleting instantly on a transient WS disconnect.
-  - Client now retries saving charts once by creating a new server-backed session if it receives a 404 (session not found) on POST /charts.
-  - Server no longer emits a verbose stack-trace on session deletion; logs were simplified for quieter output.
+3) Page-level modularity (PageManager + PDF.js)
+  - Description: Treat each PDF page as an independent object with its own annotation layer, enabling per-page reorder/duplicate/delete and per-page serialization.
+  - Source: `PDFModularity.MD`, `docs/archive/PDFModularity.MD`
+  - Priority: High (enables many UI improvements)
+  - Next step: Introduce PDF.js rendering per page and refactor current monolithic PDF logic into `PageManager`.
 
-Benefits: more reliable session lifecycle during development and multi-tab/multi-device testing.
+4) Sidebar plugin system (SidebarManager + Module API)
+  - Description: Convert the right-hand dock into a pluggable module system. Modules (Quick Jump / Thumbnails, Chat, Timers, Cues) implement a small API (id, title, render, resize, collapse, destroy).
+  - Source: `RealtimeCollabfeatures.md`, `docs/archive/RealtimeCollabfeatures.md`
+  - Priority: High
+  - Next step: Scaffold `SidebarManager` and define the Module API; migrate existing thumbnails/quick-jump and chat into the new contract.
 
+5) Quick Jump / Thumbnails improvements
+  - Description: Quick Jump should show a compact preview list (first page per uploaded chart by default), numeric order badges, and be reorder-aware (use `AppState.charts` when available). Ensure the floating Quick Jump and sidebar module render identically.
+  - Source: repo issues and `RealtimeCollabfeatures.md` (implementation notes exist in code)
+  - Priority: Medium
+  - Next step: Keep Quick Jump rendering consistent with Organize mode ordering and ensure it reacts to `charts:changed` events.
 
-- Real-time collaboration (WebSocket): PARTIALLY IMPLEMENTED
-  - Server and client support a `page:update` WebSocket message for single-page updates; clients receive and apply per-page updates.
-  - Next: add conflict resolution strategy (OT/CRDT) for concurrent edits.
+6) Reorder & merge policy (server vs local ordering)
+  - Description: When reorders happen locally and server echoes arrive, implement a deterministic merge that preserves the director's local relative order and appends server-only additions. Add a short grace window to ignore immediate server echoes of the local action.
+  - Source: internal notes (implemented/experimented in `app.js`) and `RealtimeCollabfeatures.md`
+  - Priority: Medium
+  - Next step: Add unit tests for merge behavior and observe in multi-client testing.
 
-- Per-page modularity and PageManager: IMPLEMENTED
-  - `pageManager.js` was added to split PDFs into page objects, manage per-page annotations (vector strokes), serialize/deserialize pages, and emit page-level events.
+7) Annotation tools / UX improvements
+  - Description: Expand annotation tooling beyond the red pen: colors, shapes, text insertion, eraser, and layer locking; add Undo/Redo across pages and sessions.
+  - Source: `Optional_Enhancements.MD`, `PDFModularity.MD`, `README.md`
+  - Priority: Medium
+  - Next step: Design a plugin for annotation tools and wire the undo stack per page in `PageManager`.
 
-- Annotation tools & UI (undo, color, clear): IMPLEMENTED (basic)
-  - Per-page annotation toolbar added. Undo stack and clear are implemented. Additional tools (text, shapes) remain to be added.
+8) Export annotated PDFs
+  - Description: Merge annotation canvases back into a single PDF for download using `pdf-lib` or similar.
+  - Source: `ENHANCEMENTS.md`, `Optional_Enhancements.MD`, `PDFModularity.MD`
+  - Priority: Medium
+  - Next step: Prototype a serverless export using `pdf-lib` in the browser and evaluate performance for large scores.
 
-- Thumbnail sidebar & SidebarManager: PARTIALLY IMPLEMENTED
-  - Sidebar thumbs exist and reflect page changes with a soft flash and changed-badge.
-  - Full plugin API (reorderable modules, persisted layout) is scaffolded but not finished.
+9) Cloud storage and user accounts
+  - Description: Optional integration with S3/Firebase/Supabase for persistent PDF storage and user accounts for libraries and access control.
+  - Source: `Optional_Enhancements.MD`, `README.md`
+  - Priority: Low–Medium
+  - Next step: Decide on auth model (session codes vs full accounts) and create a storage adapter interface.
 
-- Export annotated PDFs: TODO / PLANNED
-  - Recommended approach: integrate `pdf-lib` to merge annotation canvases back into a single PDF for download.
+10) Mobile packaging
+   - Description: Wrap the app with Capacitor or Cordova for an installable app and improved offline behavior.
+   - Source: `Optional_Enhancements.MD`, `README.md`
+   - Priority: Low
+   - Next step: Evaluate touch/gestures and build a minimal Capacitor wrapper.
 
-- Cloud storage / user accounts / auth: TODO
+11) UI accessibility and readability
+   - Description: Ensure Live/Concert Mode uses large, readable pages; make Quick Jump small and unobtrusive; support keyboard shortcuts, large font chat, and high-contrast annotation colors.
+   - Source: `PDFModularity.MD`, `RealtimeCollabfeatures.md`, `README.md`
+   - Priority: High (for performance use)
 
+12) Testing and CI
+   - Description: Add unit tests for pure logic (merge algorithm, session lifecycle), and jsdom-based smoke tests for UI modules (Quick Jump). Add a GitHub Actions job to run the smoke test on push/PR.
+   - Source: `README.md` (smoke test mention) and test files already added in repo
+   - Priority: Medium
+   - Next step: Add a lightweight action that runs Node and the smoke test; require green checks on PRs.
 
-## Files archived
+13) Security and production hardening
+   - Description: Harden server API (rate limits, auth), sanitize uploads, and add logging/observability for session lifecycle events.
+   - Source: `ENHANCEMENTS.md`, `README.md`
+   - Priority: High for production deployments
 
-The original optional/notes files have been moved to `docs/archive/`:
+## Recommended immediate roadmap (short list)
 
-- `docs/archive/Optional_Enhancements.MD` (original optional enhancements and roadmap)
-- `docs/archive/PDFModularity.MD` (notes on treating each PDF page as an independent object)
-- `docs/archive/RealtimeCollabfeatures.md` (ideas and diagrams for the modular sidebar, chat, thumbnails)
+1. Stabilize session lifecycle and API contracts (server) — critical for multi-device testing.
+2. Implement SidebarManager & Module API and migrate Quick Jump + Chat into it.
+3. Refactor to PageManager + PDF.js page-by-page rendering.
+4. Add server WebSocket plumbing and a simple authoritative merge for urgent collaboration needs; iterate toward CRDT/OT for annotation-level concurrency.
+5. Add export via `pdf-lib` and write tests for export correctness.
 
-If you need to restore them to the repo root, copy from `docs/archive/` back to the repo root. The archive is intended as a read-only reference.
+## Archive and sources
 
-## Next recommended steps
+Full original notes and diagrams are preserved in `docs/archive/`:
+- `docs/archive/Optional_Enhancements.MD`
+- `docs/archive/PDFModularity.MD`
+- `docs/archive/RealtimeCollabfeatures.md`
 
-1. Finalize SidebarManager module API and persist layout (order/size/collapsed state) in `localStorage` or session config.
-2. Add export support via `pdf-lib` to produce annotated PDFs.
-3. Harden the server API (auth, rate limits, partial uploads) and document the session API.
-4. Stabilize real-time sync: choose a conflict-resolution strategy and add tests for concurrent edits.
-5. Add more annotation tools (text, shapes, multiple colors) and tests for stroke serialization.
-
-## Notes
-
-- The three archived docs contain more detailed proposals and diagrams (Mermaid) for SidebarManager, PageManager, and deployment approaches. Consult `docs/archive/` for full text.
+If you want a shorter roadmap or a proposed sprint breakdown (2–4 week plan), tell me how many dev-weeks you want to budget and I will produce a sprint-by-sprint plan and rough task estimates.
 
 ---
-Generated and consolidated by the project maintainer tooling.
+_This ENHANCEMENTS.md was updated by consolidating suggestions from the repository's top-level docs and archived planning notes._
+
