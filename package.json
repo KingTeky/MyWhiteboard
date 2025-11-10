@@ -8,7 +8,8 @@
     "dev": "concurrently \"npm:serve-client\" \"npm:start:server\"",
     "start": "npm run dev",
     "test": "node server/test_pageManager.js",
-    "test:integration": "node server/test_save_with_pages.js"
+    "test:integration": "node server/test_save_with_pages.js",
+    "smoke": "node tests/quickjump-smoke.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.0"

@@ -218,3 +218,26 @@ node tests/quickjump-smoke.js
 ```
 
 The script will print PASS on success or an error message if Quick Jump did not update as expected.
+
+## Release v0.1.0
+
+A tagged snapshot of this repository has been published as `v0.1.0`. It contains the MVP feature set (Quick Jump, PageManager, WebSocket dev server, and the Quick Jump smoke test).
+
+Download the snapshot archive: MyWhiteboard-v0.1.0.zip (included in the repository root on the machine where the release was created).
+
+If you'd like, I can create a GitHub Release entry for this tag and attach the ZIP automatically.
+
+## About / Marketing copy
+
+Short pitch (use as GitHub description or social post):
+"MyWhiteboard — a lightweight, performance-first web app for musicians to manage, view and annotate PDF charts during rehearsals and performances. Fast, keyboard-friendly, and offline-first."
+
+Suggested tweet / LinkedIn blurb:
+"Just released MyWhiteboard v0.1.0 — a minimal web app for musicians to manage PDF charts, annotate pages, and run rehearsals without distractions. Open-source, easy to self-host. Try the demo or grab the snapshot on the repo. #musicians #opensource #webdev"
+
+Suggested README badges to add later:
+- Release: ![release](https://img.shields.io/github/v/tag/OWNER/REPO)
+- License: ![license](https://img.shields.io/badge/license-MIT-blue)
+- CI: ![ci](https://github.com/OWNER/REPO/actions/workflows/smoke.yml/badge.svg)
+
+If you want, I can commit a small hero GIF (20–30s) and wire a GitHub Actions workflow to generate it from a short script, or create a GitHub Release and attach the zip. Tell me which you'd like me to do next.
