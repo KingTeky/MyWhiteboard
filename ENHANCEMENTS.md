@@ -13,6 +13,39 @@ Files used as sources:
 ## Consolidated enhancement list
 
 These are the feature ideas and enhancements collected from the repository docs. Where helpful I added a brief implementation note or recommended next step.
+Below is a short classification reflecting the repository's current implementation state.
+
+## Completed
+
+- Page-level modularity (PageManager implemented): `pageManager.js` implements per-page objects, thumbnail generation, per-page annotations, serialization, and persistence hooks. (see `pageManager.js`)
+- Sidebar plugin system scaffold (SidebarManager): `SidebarManager` exists, registers modules (Quick Jump, Chat), persists layout (with legacy id migration), and supports reordering via Sortable when available. (see `app.js`)
+- Quick Jump (formerly thumbnails): renamed and implemented as one-per-chart quick navigator showing first page thumbnails, numeric order badges, active highlighting and event-driven updates via `charts:changed`. Floating Quick Jump window implemented. (see `app.js`)
+- Floating window helpers: `createFloatingWindow` provides draggable panels for chat and Quick Jump and synchronizes header toggle button states. (see `app.js`)
+- WebSocket-backed server & session persistence: `server/index.js` provides session creation, charts/pages APIs, WebSocket handling for `page:update` and `chat:message`, session lifecycle grace windows and page payload validation. (see `server/index.js`)
+- Deterministic merge & reorder guard: server vs local merge logic and recent-local-reorder grace window implemented in `handleServerChartsUpdate` to avoid ordering races. (see `app.js`)
+- Smoke test for Quick Jump: `tests/quickjump-smoke.js` runs a jsdom-based smoke test validating add/reorder/remove behavior. (see `tests/quickjump-smoke.js`)
+- Basic annotation tooling and per-page undo stack: simple pen tool, undo/clear basics, and per-page undo stacks in `AppState`. (see `app.js`)
+
+## In-progress / Next
+
+- Stabilize API contracts and production hardening of server: server exists and is used in development; next steps are formalizing API contracts, auth, rate-limiting and documentation. (priority: high)
+- Real-time concurrency strategy for annotations: WebSocket page:update works but OT/CRDT-level concurrency for concurrent edits is still a roadmap item. Consider incrementally improving merge strategy or adopting an existing CRDT library. (priority: high)
+- Export annotated PDFs: planned (`pdf-lib` recommended) but not yet implemented. Prototype browser-based export and add tests for large documents. (priority: medium)
+- CI for smoke tests: smoke test exists locally; adding a GitHub Actions job to run the jsdom smoke test on push/PR is recommended. (priority: medium)
+- More annotation tools and UX polish: color palette, shapes, text, eraser, and session-wide undo/redo remain to be implemented. (priority: medium)
+
+## Discarded / Removed
+
+- Live right-dock splitter / resizer: the previous multi-column live layout (split pages vs dock) was removed — Live Mode is single-column and uses floating panels for modules. (see `app.js` comments)
+- Legacy 'edit' mode: normalized/removed — code comments indicate legacy 'edit' mode was removed and consolidated with Live. (see `app.js`)
+- Legacy layout keys migration only: legacy `thumbnails` module id was migrated non-destructively to `quick-jump` (not removed) — older stored layouts are translated by `SidebarManager.restoreLayout()` to avoid data loss. (note)
+
+--
+
+These classifications are based on direct inspection of `app.js`, `pageManager.js`, `server/index.js` and `tests/quickjump-smoke.js`. If you'd like, I can also:
+
+- Add a short changelog section with commit references for the implemented items.
+- Create a concise sprint plan for the top 3 in-progress items.
 
 1. Backend sync (sessions persistence & multi-device)
 
