@@ -70,6 +70,25 @@ const AppState = {
 // per-page undo stacks for PageManager-based annotations
 AppState.pageUndoStacks = {};
 
+// Helper: resolve authoritative ordered charts for Quick Jump / Live modules.
+// Prefer PageManager's serialized charts when they provide pageMap data
+// (they're likely complete after async splitting). If AppState.charts is
+// present and has the same length as PageManager charts, prefer AppState
+// because it reflects Organize mode ordering. This avoids showing only a
+// single chart when one source is stale.
+function resolveOrderedCharts(pmCharts) {
+    const pmLen = Array.isArray(pmCharts) ? pmCharts.length : 0;
+    const appLen = (window.AppState && Array.isArray(AppState.charts)) ? AppState.charts.length : 0;
+    // nothing available
+    if (!pmLen && !appLen) return [];
+    // both present and equal length: assume AppState reflects organizer ordering
+    if (pmLen && appLen && pmLen === appLen) return AppState.charts.slice();
+    // prefer PageManager charts when they exist (they include pageMap/page ids)
+    if (pmLen) return (Array.isArray(pmCharts) ? pmCharts.slice() : []);
+    // fallback to AppState
+    return Array.isArray(AppState.charts) ? AppState.charts.slice() : [];
+}
+
 // Live mode polling config
 const LIVE_POLL_INTERVAL_MS = 3000; // 3s poll interval for chart updates
 let _livePollTimer = null;
@@ -1106,7 +1125,7 @@ function refreshQuickJump() {
                             const serialized = window._pageManager ? window._pageManager.serialize() : { charts: [], pages: {} };
                             const pagesMap = serialized.pages || {};
                             const pmCharts = serialized.charts || [];
-                            const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                            const orderedCharts = resolveOrderedCharts(pmCharts);
                             if (!orderedCharts.length) content.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
                             else orderedCharts.forEach((appCh, idx) => {
                                 try {
@@ -1185,7 +1204,7 @@ function toggleFloatingThumbs() {
                         const pagesMap = serialized.pages || {};
                         const pmCharts = serialized.charts || [];
                         // Use AppState.charts order (organize mode order) when available; fall back to PageManager order
-                        const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                        const orderedCharts = resolveOrderedCharts(pmCharts);
                         if (!orderedCharts.length) content.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
                         else orderedCharts.forEach((appCh, idx) => {
                             try {
@@ -1283,8 +1302,9 @@ class SidebarManager {
                     const serialized = window._pageManager.serialize() || {};
                     const pmCharts = serialized.charts || [];
                     const pagesMap = serialized.pages || {};
-                    // Use AppState.charts order (organize mode order) when available; fall back to PageManager order
-                    const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                    // Determine authoritative ordering (prefer Organize/AppState when it matches PageManager length,
+                    // otherwise prefer PageManager which includes pageMap entries).
+                    const orderedCharts = resolveOrderedCharts(pmCharts);
                     if (!orderedCharts.length) { contentEl.innerHTML = '<div class="sidebar-empty">No pages yet</div>'; return; }
                     orderedCharts.forEach((appCh, idx) => {
                         try {
@@ -1354,7 +1374,7 @@ class SidebarManager {
                                             const serialized = window._pageManager ? window._pageManager.serialize() : { charts: [], pages: {} };
                                             const pagesMap = serialized.pages || {};
                                             const pmCharts = serialized.charts || [];
-                                            const orderedCharts = (window.AppState && Array.isArray(AppState.charts) && AppState.charts.length) ? AppState.charts : pmCharts;
+                                            const orderedCharts = resolveOrderedCharts(pmCharts);
                                             fContent.innerHTML = '';
                                             if (!orderedCharts.length) fContent.innerHTML = '<div class="sidebar-empty">No pages yet</div>';
                                             else orderedCharts.forEach((appCh, idx) => {
