@@ -104,9 +104,13 @@ const fs = require('fs');
   window.AppState.charts = [window.AppState.charts[2], window.AppState.charts[0], window.AppState.charts[1]];
   window.dispatchEvent(new window.CustomEvent('charts:changed'));
   await new Promise(r => setTimeout(r, 50));
-  const firstLabel = window.document.querySelector('#sidebar-quick-jump .sidebar-thumb .sidebar-thumb-label')?.textContent || '';
-  console.log('First label after reorder:', firstLabel);
-  if (firstLabel !== 'Three') { console.error('FAIL: reorder did not update quickjump (firstLabel != Three)'); process.exit(11); }
+  // After reorder, Quick Jump no longer displays chart names; verify the
+  // first thumbnail corresponds to the first chart by inspecting the
+  // data-page-id / data-chart-id attribute produced by the renderer.
+  const firstThumb = window.document.querySelector('#sidebar-quick-jump .sidebar-thumb');
+  const firstPageId = firstThumb && (firstThumb.dataset.pageId || firstThumb.dataset.chartId || '');
+  console.log('First thumb page/chart id after reorder:', firstPageId);
+  if (!firstPageId.startsWith('c3')) { console.error('FAIL: reorder did not update quickjump (first thumb not c3)'); process.exit(11); }
 
   // Remove
   window.AppState.charts = window.AppState.charts.slice(0,2);

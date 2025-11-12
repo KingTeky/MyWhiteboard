@@ -612,6 +612,18 @@ input[type="text"]::placeholder {
 /* Make the thumbnails / Quick Jump floating window a bit wider by default */
 .floating-window.quick-jump { width: 420px; height: 420px; }
 
+/* Floating Quick Jump: render the floating window content as the same
+   3-column grid used by the sidebar so the floating panel and sidebar
+   look consistent. */
+.floating-window.quick-jump .floating-content {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    align-items: start;
+    overflow: auto;
+    padding: 8px;
+}
+
 /* Separate the leave button from the other mode controls to reduce accidental clicks */
 .viewer-controls #leave-session-btn {
     margin-left: 12px; /* gap between mode buttons and leave */
@@ -1321,24 +1333,35 @@ header .theme-toggle,
     padding: 12px;
     box-shadow: var(--shadow-sm);
 }
+/* Quick Jump container: render thumbnails in a compact 3-column grid
+   so Quick Jump shows 3 thumbnails per row (rows flow downward). Use
+   an auto height/scroll so the sidebar and floating window behave the
+   same. This also ensures placeholders show immediately for each
+   chart and real thumbs replace them when available. */
 #sidebar-quick-jump {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
     gap: 8px;
     overflow: auto;
     max-height: calc(100vh - 140px);
     -webkit-overflow-scrolling: touch;
+    align-items: start;
+    padding: 6px;
 }
 
+/* Thumbnail tile (Quick Jump) — compact square tiles that show only the
+   thumbnail image and the numeric order badge. Chart names are hidden
+   (Quick Jump intentionally shows only a visual grid). */
 .sidebar-thumb {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 6px;
+    display: block;
+    padding: 4px;
     border-radius: 8px;
     cursor: pointer;
     transition: background-color 180ms ease, transform 120ms ease;
     border: 1px solid transparent;
+    text-align: center;
+    position: relative; /* keep badges positioned correctly */
+    overflow: hidden;
 }
 /* ensure positioned badges inside thumbnails have a positioned parent */
 .sidebar-thumb { position: relative; }
@@ -1347,20 +1370,17 @@ header .theme-toggle,
 }
 
 .sidebar-thumb-img {
-    width: 64px;
-    height: 64px;
-    flex: 0 0 64px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1; /* square tiles */
+    display: block;
     overflow: hidden;
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--surface);
 }
 .sidebar-thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumb-placeholder { color: var(--text-secondary); font-size: 0.85rem; padding: 6px; text-align: center; }
+.thumb-placeholder { color: var(--text-secondary); font-size: 0.85rem; padding: 6px; text-align: center; display:flex; align-items:center; justify-content:center; height:100%; }
 
-.sidebar-thumb-label { font-size: 0.85rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-thumb-label { display: none; }
 
 /* Flash animation when a thumbnail updates remotely */
 /* Softer flash animation: shorter duration and subtler shadow/translate */

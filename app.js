@@ -1132,18 +1132,46 @@ function refreshQuickJump() {
                                 try {
                                     const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
                                     const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
-                                    if (!firstPageId) return;
-                                    const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
-                                    const pid = firstPageId;
-                                    const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
-                                    const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
-                                    if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
-                                    else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
-                                    item.appendChild(imgWrap);
-                                    const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
-                                    try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
-                                    item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
-                                    content.appendChild(item);
+                                    if (firstPageId) {
+                                        const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
+                                        const pid = firstPageId;
+                                        const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                                        const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                        if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                                        else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                        item.appendChild(imgWrap);
+                                        const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                        try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                        item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                                        content.appendChild(item);
+                                    } else {
+                                        // Fallback: PageManager hasn't split pages yet. Show a per-chart placeholder
+                                        const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.chartId = (appCh && appCh.id) || '';
+                                        const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                        if (appCh && appCh.thumb) { const img = new Image(); img.src = appCh.thumb; img.alt = (appCh && appCh.name) || ''; imgWrap.appendChild(img); }
+                                        else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                        item.appendChild(imgWrap);
+                                        const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || '';
+                                        item.appendChild(label);
+                                        try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                        // clicking a chart-level placeholder should jump to the chart block in Live mode
+                                        item.addEventListener('click', () => {
+                                            try {
+                                                AppState.currentChartIndex = idx;
+                                                AppState.currentPageNumber = 1;
+                                                switchToMode('live');
+                                                renderLiveMode();
+                                                setTimeout(() => {
+                                                    try {
+                                                        const pagesContainer = document.getElementById('live-pages');
+                                                        const target = pagesContainer && pagesContainer.querySelector(`.live-chart-block[data-chart-index="${idx}"]`);
+                                                        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                    } catch (e) {}
+                                                }, 300);
+                                            } catch (e) {}
+                                        });
+                                        content.appendChild(item);
+                                    }
                                 } catch (e) {}
                             });
                         } catch (e) {}
@@ -1212,25 +1240,40 @@ function toggleFloatingThumbs() {
                                 // find matching chart metadata from PageManager serialize (contains pageMap)
                                 const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
                                 const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
-                                if (!firstPageId) return;
-                                const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
-                                const pid = firstPageId;
-                                const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
-                                const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
-                                if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
-                                else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
-                                item.appendChild(imgWrap);
-                                const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
-                                // chart order badge (1-based index) - Quick Jump specific
-                                try {
-                                    const order = (typeof idx === 'number') ? (idx + 1) : '';
-                                    const orderBadge = document.createElement('div');
-                                    orderBadge.className = 'quickjump-order-badge';
-                                    orderBadge.textContent = String(order);
-                                    item.appendChild(orderBadge);
-                                } catch (e) {}
-                                item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
-                                content.appendChild(item);
+                                if (firstPageId) {
+                                    const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
+                                    const pid = firstPageId;
+                                    const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                                    const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                    if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                                    else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                    item.appendChild(imgWrap);
+                                    const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                    // chart order badge (1-based index) - Quick Jump specific
+                                    try {
+                                        const order = (typeof idx === 'number') ? (idx + 1) : '';
+                                        const orderBadge = document.createElement('div');
+                                        orderBadge.className = 'quickjump-order-badge';
+                                        orderBadge.textContent = String(order);
+                                        item.appendChild(orderBadge);
+                                    } catch (e) {}
+                                    item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                                    content.appendChild(item);
+                                } else {
+                                    // fallback per-chart placeholder when pageMap isn't ready
+                                    const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.chartId = (appCh && appCh.id) || '';
+                                    const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                    if (appCh && appCh.thumb) { const img = new Image(); img.src = appCh.thumb; img.alt = (appCh && appCh.name) || ''; imgWrap.appendChild(img); }
+                                    else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                    item.appendChild(imgWrap);
+                                    const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || '';
+                                    item.appendChild(label);
+                                    try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                    item.addEventListener('click', () => {
+                                        try { AppState.currentChartIndex = idx; AppState.currentPageNumber = 1; switchToMode('live'); renderLiveMode(); setTimeout(() => { try { const pagesContainer = document.getElementById('live-pages'); const target = pagesContainer && pagesContainer.querySelector(`.live-chart-block[data-chart-index="${idx}"]`); if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} }, 300); } catch (e) {}
+                                    });
+                                    content.appendChild(item);
+                                }
                             } catch (e) {}
                         });
                     }
@@ -1311,31 +1354,50 @@ class SidebarManager {
                         try {
                             const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
                             const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
-                            if (!firstPageId) return;
-                            const p = pagesMap[firstPageId] || window._pageManager.getPage(firstPageId) || {};
-                            const pid = firstPageId;
-                            // debug hint
-                            try { console.debug && console.debug('QuickJump: rendering chart', (appCh && appCh.id), 'as index', idx); } catch (e) {}
-                            const item = document.createElement('div');
-                            item.className = 'sidebar-thumb';
-                            item.dataset.pageId = pid;
-                            item.style.position = item.style.position || 'relative';
-                            const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
-                            if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = `page ${pid}`; imgWrap.appendChild(img); }
-                            else { imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`; }
-                            item.appendChild(imgWrap);
+                            if (firstPageId) {
+                                const p = pagesMap[firstPageId] || window._pageManager.getPage(firstPageId) || {};
+                                const pid = firstPageId;
+                                // debug hint
+                                try { console.debug && console.debug('QuickJump: rendering chart', (appCh && appCh.id), 'as index', idx); } catch (e) {}
+                                const item = document.createElement('div');
+                                item.className = 'sidebar-thumb';
+                                item.dataset.pageId = pid;
+                                item.style.position = item.style.position || 'relative';
+                                const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = `page ${pid}`; imgWrap.appendChild(img); }
+                                else { imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`; }
+                                item.appendChild(imgWrap);
                                 const badge = document.createElement('div'); badge.className = 'thumb-changed-badge'; badge.textContent = 'Updated'; item.appendChild(badge);
                                 // chart order badge (1-based index) - Quick Jump specific
-                            try {
-                                const order = (typeof idx === 'number') ? (idx + 1) : '';
-                                const orderBadge = document.createElement('div');
-                                orderBadge.className = 'quickjump-order-badge';
-                                orderBadge.textContent = String(order);
-                                item.appendChild(orderBadge);
-                            } catch (e) { /* non-fatal */ }
-                            const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
-                            item.addEventListener('click', () => { this.onThumbClick(pid); });
-                            contentEl.appendChild(item);
+                                try {
+                                    const order = (typeof idx === 'number') ? (idx + 1) : '';
+                                    const orderBadge = document.createElement('div');
+                                    orderBadge.className = 'quickjump-order-badge';
+                                    orderBadge.textContent = String(order);
+                                    item.appendChild(orderBadge);
+                                } catch (e) { /* non-fatal */ }
+                                const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                item.addEventListener('click', () => { this.onThumbClick(pid); });
+                                contentEl.appendChild(item);
+                            } else {
+                                // fallback per-chart placeholder when pageMap isn't ready
+                                const item = document.createElement('div');
+                                item.className = 'sidebar-thumb';
+                                item.dataset.chartId = (appCh && appCh.id) || '';
+                                item.style.position = item.style.position || 'relative';
+                                const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                if (appCh && appCh.thumb) { const img = new Image(); img.src = appCh.thumb; img.alt = (appCh && appCh.name) || ''; imgWrap.appendChild(img); }
+                                else { imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`; }
+                                item.appendChild(imgWrap);
+                                const badge = document.createElement('div'); badge.className = 'thumb-changed-badge'; badge.textContent = 'Updated'; item.appendChild(badge);
+                                try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || '';
+                                item.appendChild(label);
+                                item.addEventListener('click', () => {
+                                    try { AppState.currentChartIndex = idx; AppState.currentPageNumber = 1; switchToMode('live'); renderLiveMode(); setTimeout(() => { try { const pagesContainer = document.getElementById('live-pages'); const target = pagesContainer && pagesContainer.querySelector(`.live-chart-block[data-chart-index="${idx}"]`); if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} }, 300); } catch (e) {}
+                                });
+                                contentEl.appendChild(item);
+                            }
                         } catch (e) { /* non-fatal per-chart */ }
                     });
                 } catch (e) { /* non-fatal */ }
@@ -1382,18 +1444,30 @@ class SidebarManager {
                                                 try {
                                                     const pmch = pmCharts.find(x => x.id === (appCh && appCh.id)) || appCh || {};
                                                     const firstPageId = (pmch.pageMap && pmch.pageMap.length) ? pmch.pageMap[0] : null;
-                                                    if (!firstPageId) return;
-                                                    const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
-                                                    const pid = firstPageId;
-                                                    const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
-                                                    const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
-                                                    if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
-                                                    else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
-                                                    item.appendChild(imgWrap);
-                                                    const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
-                                                    try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
-                                                    item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
-                                                    fContent.appendChild(item);
+                                                    if (firstPageId) {
+                                                        const p = pagesMap[firstPageId] || (window._pageManager ? window._pageManager.getPage(firstPageId) : {}) || {};
+                                                        const pid = firstPageId;
+                                                        const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.pageId = pid;
+                                                        const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                                        if (p.thumb) { const img = new Image(); img.src = p.thumb; img.alt = pid; imgWrap.appendChild(img); }
+                                                        else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                                        item.appendChild(imgWrap);
+                                                        const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || pid; item.appendChild(label);
+                                                        try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                                        item.addEventListener('click', () => { if (window._sidebarManager) window._sidebarManager.onThumbClick(pid); });
+                                                        fContent.appendChild(item);
+                                                    } else {
+                                                        const item = document.createElement('div'); item.className = 'sidebar-thumb'; item.dataset.chartId = (appCh && appCh.id) || '';
+                                                        const imgWrap = document.createElement('div'); imgWrap.className = 'sidebar-thumb-img';
+                                                        if (appCh && appCh.thumb) { const img = new Image(); img.src = appCh.thumb; img.alt = (appCh && appCh.name) || ''; imgWrap.appendChild(img); }
+                                                        else imgWrap.innerHTML = `<div class="thumb-placeholder">${escapeHtml(((appCh && appCh.name)||'').toString().slice(0,12))}</div>`;
+                                                        item.appendChild(imgWrap);
+                                                        const label = document.createElement('div'); label.className = 'sidebar-thumb-label'; label.textContent = (appCh && appCh.name) || '';
+                                                        item.appendChild(label);
+                                                        try { const order = (typeof idx === 'number') ? (idx + 1) : ''; const orderBadge = document.createElement('div'); orderBadge.className = 'quickjump-order-badge'; orderBadge.textContent = String(order); item.appendChild(orderBadge); } catch (e) {}
+                                                        item.addEventListener('click', () => { try { AppState.currentChartIndex = idx; AppState.currentPageNumber = 1; switchToMode('live'); renderLiveMode(); setTimeout(() => { try { const pagesContainer = document.getElementById('live-pages'); const target = pagesContainer && pagesContainer.querySelector(`.live-chart-block[data-chart-index="${idx}"]`); if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} }, 300); } catch (e) {} });
+                                                        fContent.appendChild(item);
+                                                    }
                                                 } catch (e) {}
                                             });
                                         } catch (e) {}

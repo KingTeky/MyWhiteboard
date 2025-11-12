@@ -156,3 +156,69 @@ If you want a shorter roadmap or a proposed sprint breakdown (2–4 week plan), 
 ---
 _This ENHANCEMENTS.md was updated by consolidating suggestions from the repository's top-level docs and archived planning notes._
 
+## iPhone Companion Chat App (chat-only clients)
+
+Goal
+- Provide a small iOS companion app that connects to an existing session (6‑character code) and participates in chat only. Visitors can send/receive messages without loading charts or thumbnails.
+
+Why
+- Improves accessibility for attendees who only need chat (musicians on phones, audience members, production staff).
+- Reduces bandwidth and CPU on mobile devices by avoiding PDF rendering.
+
+Server-side requirements (summary)
+- Reuse existing WebSocket endpoint; ensure server supports a `subscribe` message and returns recent chat history.
+- Add (or confirm) REST endpoint: `GET /api/sessions/:code/chat?limit=50` to fetch recent messages on connect.
+- Add device-token registration endpoint or accept `deviceToken` in the `subscribe` WebSocket message for APNs.
+- Persist chat messages (UUID + server ts) and broadcast `{ type: 'chat:message', message: { id, session, role, from, text, ts } }` to subscribed clients.
+- Implement server APNs integration to send push notifications for new messages to registered device tokens.
+
+Message & WebSocket contract (recommended)
+- Client → Server:
+    - { type: 'subscribe', session: 'ABC123', token?: 'directorToken', deviceToken?: 'apns_token' }
+    - { type: 'chat:message', session: 'ABC123', clientTempId?: 'tmp_...', role: 'Musician', from: 'Nick', text: 'Hello' }
+- Server → Client:
+    - { type: 'chat:history', session:'ABC123', messages: [ ... ] } (on connect or on-request)
+    - { type: 'chat:message', message: { id, session, role, from, text, ts } } (broadcast when saved)
+    - { type: 'ack', clientTempId: 'tmp_...', id: 'uuid' } (optional write-ack mapping)
+
+iOS client architecture (high level)
+- Networking: use `URLSessionWebSocketTask` (iOS 13+) or Starscream for WebSocket; secure `wss://` and HTTPS for REST.
+- Connect flow: open WebSocket → send `subscribe` → fetch history via REST (fallback) → merge into local timeline.
+- UI: lightweight message list (SwiftUI/UICollectionView), input bar, role/name selection.
+- Local caching: keep last N messages in Core Data / SQLite for offline display and fast startup.
+- Offline & reconnection: on reconnect fetch messages since last server ts or rely on history endpoint; handle dedupe by server id.
+- Background notifications: register for APNs, store device token on server, rely on APNs for background delivery (WebSocket won't stay alive reliably in background).
+
+Push notifications (APNs)
+- Server stores device tokens and sends an APNs payload when a new message arrives (optionally send silent push + background fetch).
+- Notifications include session code + short alert text; tapping the notification opens the app and pre-fills/joins that session.
+
+Security & access control
+- Use session code as the primary join key; optionally rate-limit and validate messages server-side (length, charset).
+- Director-only actions still require `directorToken` and are not granted to chat-only clients.
+- Always use TLS for WebSocket and REST endpoints.
+
+Edge cases & operational notes
+- Deduplicate messages using server ids and clientTempId mapping to avoid duplicates on reconnection.
+- Provide server-side rate limits or a per-client cooldown to reduce spam risk.
+- Respect retention policy (how long messages persist); include a deletion/moderation flow if required.
+
+Incremental implementation roadmap (recommended)
+1. Add/verify `GET /api/sessions/:code/chat` on server and return recent messages (simple DB or file-backed store).
+2. Accept device tokens and wire a simple APNs sender in development (sandbox) to validate end-to-end push flow.
+3. Implement minimal native iOS prototype: join by session code, WebSocket subscribe, show messages, send messages.
+4. Add local caching and reconnection handling; show pending message state until server ack arrives.
+5. Harden server: persistence, rate-limiting, validation, and integrate APNs for production.
+
+Estimated effort
+- API + server small persistence: 1–3 days.
+- iOS MVP (send/receive, no push): 3–7 days for a SwiftUI developer.
+- APNs + production readiness: +2–4 days.
+
+Monitoring & testing
+- Add metrics for connected clients, messages/sec, WebSocket errors.
+- Integration tests: simulate multiple mobile clients, ensure backfills and push flows work.
+
+Next step
+- If you want, I can draft the exact JSON schemas and an example WebSocket sequence (no code), or prepare a minimal server patch that adds the chat history endpoint and device-token registration route. Tell me which you prefer.
+
