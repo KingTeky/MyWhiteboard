@@ -81,12 +81,13 @@ function resolveOrderedCharts(pmCharts) {
     const appLen = (window.AppState && Array.isArray(AppState.charts)) ? AppState.charts.length : 0;
     // nothing available
     if (!pmLen && !appLen) return [];
-    // both present and equal length: assume AppState reflects organizer ordering
-    if (pmLen && appLen && pmLen === appLen) return AppState.charts.slice();
-    // prefer PageManager charts when they exist (they include pageMap/page ids)
-    if (pmLen) return (Array.isArray(pmCharts) ? pmCharts.slice() : []);
-    // fallback to AppState
-    return Array.isArray(AppState.charts) ? AppState.charts.slice() : [];
+    // If AppState has charts, prefer AppState order because it reflects Organize mode
+    // (even if PageManager has partially completed page splitting). We will
+    // augment AppState charts with PageManager metadata when available later
+    // in the rendering code.
+    if (appLen) return Array.isArray(AppState.charts) ? AppState.charts.slice() : [];
+    // fallback to PageManager charts
+    return Array.isArray(pmCharts) ? pmCharts.slice() : [];
 }
 
 // Live mode polling config
