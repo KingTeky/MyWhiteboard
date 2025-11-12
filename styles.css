@@ -826,7 +826,8 @@ header .theme-toggle,
 
 /* page wrapper for live pages */
 .live-page-wrapper {
-    margin-bottom: 16px;
+    margin: 0 auto 16px; /* center page blocks horizontally */
+    max-width: 900px;    /* constrain large pages so they remain centered */
 }
 
 /* Reorder animation: subtle slide + highlight when MD changes ordering */
@@ -919,7 +920,7 @@ header .theme-toggle,
 
 /* make the pages and thumbs independently scrollable in the live container */
 .live-container { align-items: stretch; }
-.live-pages { overflow: auto; }
+.live-pages { overflow: auto; height: 100%; }
 .live-quick-jump { overflow: auto; }
 
 /* Upload area container: center the drop-zone within the page */
