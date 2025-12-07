@@ -2,10 +2,10 @@ name: QuickJump Smoke Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [ MusicWhiteboard ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ MusicWhiteboard ]
 
 jobs:
   smoke:

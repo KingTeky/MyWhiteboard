@@ -66,7 +66,7 @@ Since you’re a systems architect, here are some modular next steps:
 
 Would you like help scaffolding a backend or real-time sync layer next? Or maybe packaging this into a mobile app?
 
-Perfect, Eli — I’ve just reviewed your **current `main` branch** of *MyWhiteboard* and compared it against the **Optional Enhancements** list you drafted earlier. Let’s break it down systematically:
+Perfect, Eli — I’ve just reviewed your **current `MusicWhiteboard` branch** of *MyWhiteboard* and compared it against the **Optional Enhancements** list you drafted earlier. Let’s break it down systematically:
 
 ---
 
@@ -107,3 +107,4 @@ If you want to prioritize impact:
 👉 Eli, given your architectural style (plugin-based, modular, extensible), I’d suggest starting with a **backend sync layer** that’s pluggable — so you can later add WebSockets, cloud storage, and auth without rewriting core logic.  
 
 Do you want me to sketch a **modular backend scaffold** (API contracts, DB schema, WebSocket hooks) that would slot neatly into your current front-end?
+

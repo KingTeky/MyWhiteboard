@@ -5,7 +5,7 @@ Thanks for your interest in contributing to MyWhiteboard! Small, focused contrib
 How to contribute:
 
 1. Fork the repository.
-2. Create a feature branch from `main` (e.g. `fix/quickjump-bug`).
+2. Create a feature branch from `MusicWhiteboard` (e.g. `fix/quickjump-bug`).     
 3. Make small, well-scoped commits with clear messages.
 4. Run existing tests (there is a smoke test under `tests/quickjump-smoke.js`).
 5. Open a Pull Request with a short description and link to any related issue.
