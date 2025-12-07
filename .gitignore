@@ -33,3 +33,6 @@ logs/
 # Server runtime data
 /server/data/
 /server/sessions.json
+
+# reference images (local only)
+notesimages/
